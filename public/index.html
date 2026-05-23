@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>chatter</title>
+
+<!-- Include Marked.js for markdown parsing -->
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+<style>
+:root {
+    --bg-main: #212121;
+    --bg-sidebar: #171717;
+    --bg-message-user: #2f2f2f;
+    --text-primary: #ececec;
+    --text-secondary: #b4b4b4;
+    --border-color: #424242;
+    --font-stack: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    display: flex;
+    height: 100vh;
+    background: var(--bg-main);
+    color: var(--text-primary);
+    font-family: var(--font-stack);
+    font-size: 16px;
+    line-height: 1.6;
+}
+
+/* SIDEBAR UI */
+#sidebar {
+    width: 260px;
+    background: var(--bg-sidebar);
+    display: flex;
+    flex-direction: column;
+    padding: 12px;
+    z-index: 10;
+}
+
+#newChat {
+    width: 100%;
+    padding: 10px 14px;
+    background: transparent;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    color: var(--text-primary);
+    text-align: left;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+}
+
+#newChat:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+#chatList {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.chat-item {
+    padding: 10px 12px;
+    cursor: pointer;
+    border-radius: 6px;
+    font-size: 14px;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: background 0.15s ease;
+}
+
+.chat-item:hover, .chat-item.active {
+    background: #212121;
+}
+
+/* MAIN CONTENT CONTAINER */
+#main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    position: relative;
+}
+
+#topbar {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 14px 20px;
+    background: var(--bg-main);
+}
+
+#topbar button {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    padding: 6px 12px;
+    border-radius: 16px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+#topbar button:hover {
+    border-color: #666;
+    color: var(--text-primary);
+}
+
+/* THREAD CONTEXT WINDOW */
+#chat {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.message-wrapper {
+    width: 100%;
+    display: flex;
+    padding: 14px 24px;
+    justify-content: center;
+}
+
+.message-container {
+    width: 100%;
+    max-width: 720px;
+    display: flex;
+    flex-direction: column;
+}
+
+.msg-header {
+    font-weight: 600;
+    font-size: 14px;
+    margin-bottom: 4px;
+}
+
+.user-wrapper .msg-header {
+    align-self: flex-end;
+    color: var(--text-primary);
+}
+
+.ai-wrapper .msg-header {
+    color: #10a37f;
+}
+
+.msg-body {
+    font-size: 16px;
+    word-break: break-word;
+}
+
+/* Typography Overrides for Markdown elements */
+.msg-body p { margin: 0 0 10px 0; }
+.msg-body p:last-child { margin-bottom: 0; }
+.msg-body ul, .msg-body ol { margin: 0 0 10px 0; padding-left: 24px; }
+.msg-body h1, .msg-body h2, .msg-body h3 { margin: 14px 0 8px 0; font-size: 1.2em; }
+
+/* Code and block styling */
+.msg-body code {
+    background: #2d2d2d;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 14px;
+}
+
+.msg-body pre {
+    background: #0d0d0d;
+    padding: 16px;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin: 12px 0;
+}
+
+.msg-body pre code {
+    background: transparent;
+    padding: 0;
+    font-size: 14px;
+    color: #e6e6e6;
+    display: block;
+}
+
+/* User Bubble Box Layout */
+.user-wrapper {
+    justify-content: flex-end;
+}
+
+.user-wrapper .message-container {
+    align-items: flex-end;
+}
+
+.user-wrapper .msg-body {
+    background-color: var(--bg-message-user);
+    padding: 10px 16px;
+    border-radius: 20px;
+    max-width: 80%;
+}
+
+.ai-wrapper .msg-body {
+    padding: 4px 0;
+    color: var(--text-primary);
+}
+
+/* INPUT COMPONENT BOX AREA */
+#input-area {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    padding: 0 24px 24px 24px;
+    background: var(--bg-main);
+}
+
+#form {
+    width: 100%;
+    max-width: 720px;
+    position: relative;
+    background: var(--bg-message-user);
+    border-radius: 24px;
+    display: flex;
+    align-items: center;
+    padding: 6px 12px;
+}
+
+input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text-primary);
+    font-family: var(--font-stack);
+    font-size: 16px;
+    padding: 10px 40px 10px 10px;
+}
+
+input::placeholder {
+    color: var(--text-secondary);
+}
+
+#form button {
+    position: absolute;
+    right: 12px;
+    background: var(--text-primary);
+    border: none;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: opacity 0.2s;
+}
+
+#form button:hover {
+    opacity: 0.85;
+}
+
+#form button svg {
+    fill: var(--bg-sidebar);
+}
+
+/* MINIMAL MODAL POPUPS */
+#modal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+}
+
+#modalContent {
+    background: #2f2f2f;
+    width: 90%;
+    max-width: 500px;
+    border-radius: 12px;
+    padding: 24px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.3);
+}
+
+#modalTitle {
+    margin-top: 0;
+    font-size: 18px;
+    font-weight: 600;
+}
+
+textarea {
+    width: 100%;
+    height: 160px;
+    background: var(--bg-main);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 12px;
+    font-family: var(--font-stack);
+    font-size: 14px;
+    resize: none;
+    outline: none;
+    margin-bottom: 16px;
+}
+
+textarea:focus {
+    border-color: #666;
+}
+
+.modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.modal-actions button {
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+    font-weight: 500;
+    border: none;
+}
+
+#save {
+    background: #10a37f;
+    color: white;
+}
+
+.btn-cancel {
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color) !important;
+}
+
+.btn-cancel:hover {
+    color: var(--text-primary);
+}
+</style>
+</head>
+
+<body>
+
+<div id="sidebar">
+    <button id="newChat">
+        <span>New chat</span>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+    <div id="chatList"></div>
+</div>
+
+<div id="main">
+    <div id="topbar">
+        <button id="charBtn">System Character</button>
+        <button id="worldBtn">World Context</button>
+    </div>
+
+    <div id="chat"></div>
+
+    <div id="input-area">
+        <form id="form">
+            <input id="message" autocomplete="off" placeholder="Message Grok..." />
+            <button type="submit">
+                <svg width="16" height="16" viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+            </button>
+        </form>
+    </div>
+</div>
+
+<div id="modal">
+    <div id="modalContent">
+        <h3 id="modalTitle">Configuration</h3>
+        <textarea id="modalText"></textarea>
+        <div class="modal-actions">
+            <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+            <button id="save">Save Changes</button>
+        </div>
+    </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+function getUserId() {
+    let id = localStorage.getItem("userId");
+    if (!id) {
+        id = crypto.randomUUID();
+        localStorage.setItem("userId", id);
+    }
+    return id;
+}
+
+const socket = io({
+    auth: { userId: getUserId() }
+});
+
+let currentChat = null;
+let chatData = null;
+
+const chatDiv = document.getElementById("chat");
+const chatList = document.getElementById("chatList");
+const input = document.getElementById("message");
+
+/* Configure marked options to preserve breaks cleanly */
+marked.setOptions({
+    breaks: true,
+    gfm: true
+});
+
+/* APPEND MESSAGE & PARSE MARKDOWN WITH MARKED */
+function appendMessage(role, content) {
+    const wrapper = document.createElement("div");
+    wrapper.className = `message-wrapper ${role}-wrapper`;
+
+    const container = document.createElement("div");
+    container.className = "message-container";
+
+    const header = document.createElement("div");
+    header.className = "msg-header";
+    header.innerText = role === "user" ? "You" : "Assistant";
+
+    const body = document.createElement("div");
+    body.className = "msg-body";
+    
+    // Use marked.parse() to safely output structured HTML markdown formatting
+    body.innerHTML = marked.parse(content);
+
+    container.appendChild(header);
+    container.appendChild(body);
+    wrapper.appendChild(container);
+    chatDiv.appendChild(wrapper);
+    
+    chatDiv.scrollTop = chatDiv.scrollHeight;
+}
+
+/* CHAT LIST UPDATE */
+socket.on("chats list", (chats) => {
+    chatList.innerHTML = "";
+    chats.forEach(item => {
+        const div = document.createElement("div");
+        div.className = "chat-item";
+        if(currentChat === item.id) div.className += " active";
+        div.innerText = item.name;
+        div.onclick = () => {
+            document.querySelectorAll('.chat-item').forEach(el => el.classList.remove('active'));
+            div.classList.add('active');
+            socket.emit("open chat", item.id);
+        };
+        chatList.appendChild(div);
+    });
+});
+
+/* LOAD CHAT */
+socket.on("load chat", (chat) => {
+    chatData = chat;
+    currentChat = chat.chatId;
+    localStorage.setItem("lastChat", currentChat);
+
+    chatDiv.innerHTML = "";
+    chat.messages.forEach(m => {
+        appendMessage(m.role, m.content);
+    });
+});
+
+/* NEW CHAT INIT */
+document.getElementById("newChat").onclick = () => {
+    socket.emit("new chat");
+};
+
+/* FORM ACTIONS */
+document.getElementById("form").onsubmit = (e) => {
+    e.preventDefault();
+    const msg = input.value.trim();
+
+    if (!msg) return;
+    if (!currentChat) {
+        alert("Please start or choose a conversation thread in the sidebar.");
+        return;
+    }
+
+    appendMessage("user", msg);
+
+    socket.emit("chat message", {
+        chatId: currentChat,
+        message: msg
+    });
+
+    input.value = "";
+};
+
+/* SYSTEM RESPONSES */
+socket.on("chat response", (data) => {
+    if(data.chatId === currentChat) {
+        appendMessage("ai", data.message);
+    }
+});
+
+/* DIALOG MODAL CONTROLS */
+const modal = document.getElementById("modal");
+const modalText = document.getElementById("modalText");
+const modalTitle = document.getElementById("modalTitle");
+
+function openModal(type) {
+    modal.style.display = "flex";
+    modal.dataset.type = type;
+
+    if (!chatData) return;
+
+    if (type === "character") {
+        modalTitle.innerText = "System Instructions (Character)";
+        modalText.value = chatData.character || "";
+    }
+    if (type === "world") {
+        modalTitle.innerText = "World Scenario Parameters";
+        modalText.value = chatData.worldScenario || "";
+    }
+}
+
+function closeModal() {
+    modal.style.display = "none";
+}
+
+document.getElementById("charBtn").onclick = () => openModal("character");
+document.getElementById("worldBtn").onclick = () => openModal("world");
+
+document.getElementById("save").onclick = () => {
+    const type = modal.dataset.type;
+    if (!currentChat) return;
+
+    if (type === "character") {
+        socket.emit("update character", {
+            chatId: currentChat,
+            character: modalText.value
+        });
+    }
+    if (type === "world") {
+        socket.emit("update world", {
+            chatId: currentChat,
+            worldScenario: modalText.value
+        });
+    }
+    closeModal();
+};
+</script>
+</body>
+</html>
