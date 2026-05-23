@@ -33,13 +33,28 @@ function loadChat(userId, chatId) {
 
     if (!fs.existsSync(file)) {
         return {
-            character: "",
+            characters: [], // Array of objects: { name: string, text: string, enabled: boolean }
             worldScenario: "",
             messages: []
         };
     }
 
-    return JSON.parse(fs.readFileSync(file, "utf8"));
+    const data = JSON.parse(fs.readFileSync(file, "utf8"));
+    
+    if (!data.characters) data.characters = [];
+    
+    // Migration: Ensure characters use the new structure { name, text, enabled }
+    data.characters = data.characters.map(char => {
+        if (typeof char === "string") {
+            return { name: char.slice(0, 15) + "...", text: char, enabled: true };
+        }
+        if (!char.name) {
+            char.name = char.text ? char.text.slice(0, 15) + "..." : "Unnamed Character";
+        }
+        return char;
+    });
+
+    return data;
 }
 
 function saveChat(userId, chatId, data) {
@@ -57,7 +72,6 @@ function listChats(userId) {
         .filter(f => f.endsWith(".json"))
         .map(f => {
             const id = f.replace(".json", "");
-            // Create a friendlier display name from the timestamp if applicable
             let name = id;
             if (id.startsWith("chat-")) {
                 const timestamp = parseInt(id.split("-")[1]);
@@ -72,7 +86,6 @@ function listChats(userId) {
 /* ---------------- SOCKET ---------------- */
 
 io.on("connection", (socket) => {
-
     const userId = socket.handshake.auth?.userId || socket.id;
 
     socket.emit("chats list", listChats(userId));
@@ -82,7 +95,7 @@ io.on("connection", (socket) => {
         const id = `chat-${Date.now()}`;
 
         saveChat(userId, id, {
-            character: "",
+            characters: [],
             worldScenario: "",
             messages: []
         });
@@ -94,21 +107,16 @@ io.on("connection", (socket) => {
     /* OPEN CHAT */
     socket.on("open chat", (chatId) => {
         if (!chatId) return;
-
         const chat = loadChat(userId, chatId);
-
-        socket.emit("load chat", {
-            chatId,
-            ...chat
-        });
+        socket.emit("load chat", { chatId, ...chat });
     });
 
-    /* CHARACTER */
-    socket.on("update character", ({ chatId, character }) => {
-        if (!chatId) return;
+    /* UPDATE CHARACTERS */
+    socket.on("update characters", ({ chatId, characters }) => {
+        if (!chatId || !Array.isArray(characters)) return;
 
         const chat = loadChat(userId, chatId);
-        chat.character = character;
+        chat.characters = characters;
 
         saveChat(userId, chatId, chat);
         socket.emit("load chat", { chatId, ...chat });
@@ -138,12 +146,23 @@ io.on("connection", (socket) => {
             content: message
         });
 
+        // Collect instructions from enabled items only
+        const systemMessages = (chat.characters || [])
+            .filter(char => char.enabled)
+            .map(char => ({
+                role: "system",
+                content: `Character Name: ${char.name}\nInstructions: ${char.text}`
+            }));
+
+        if (chat.worldScenario) {
+            systemMessages.push({ role: "system", content: chat.worldScenario });
+        }
+
         try {
             const completion = await grok.chat.completions.create({
                 model: "grok-4-1-fast-non-reasoning",
                 messages: [
-                    { role: "system", content: chat.character || "" },
-                    { role: "system", content: chat.worldScenario || "" },
+                    ...systemMessages,
                     ...chat.messages
                 ]
             });
