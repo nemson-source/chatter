@@ -33,34 +33,21 @@ function loadChat(userId, chatId) {
 
     if (!fs.existsSync(file)) {
         return {
-            characters: [], // Array of objects: { name: string, text: string, enabled: boolean }
+            characters: [],
             worldScenario: "",
             messages: []
         };
     }
 
     const data = JSON.parse(fs.readFileSync(file, "utf8"));
-    
     if (!data.characters) data.characters = [];
-    
-    // Migration: Ensure characters use the new structure { name, text, enabled }
-    data.characters = data.characters.map(char => {
-        if (typeof char === "string") {
-            return { name: char.slice(0, 15) + "...", text: char, enabled: true };
-        }
-        if (!char.name) {
-            char.name = char.text ? char.text.slice(0, 15) + "..." : "Unnamed Character";
-        }
-        return char;
-    });
-
+    if (!data.messages) data.messages = [];
     return data;
 }
 
 function saveChat(userId, chatId, data) {
     const dir = userDir(userId);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-
     fs.writeFileSync(chatPath(userId, chatId), JSON.stringify(data, null, 2));
 }
 
@@ -90,101 +77,112 @@ io.on("connection", (socket) => {
 
     socket.emit("chats list", listChats(userId));
 
-    /* NEW CHAT */
     socket.on("new chat", () => {
         const id = `chat-${Date.now()}`;
-
-        saveChat(userId, id, {
-            characters: [],
-            worldScenario: "",
-            messages: []
-        });
-
+        saveChat(userId, id, { characters: [], worldScenario: "", messages: [] });
         socket.emit("chats list", listChats(userId));
         socket.emit("open chat", id);
     });
 
-    /* OPEN CHAT */
     socket.on("open chat", (chatId) => {
         if (!chatId) return;
         const chat = loadChat(userId, chatId);
         socket.emit("load chat", { chatId, ...chat });
     });
 
-    /* UPDATE CHARACTERS */
     socket.on("update characters", ({ chatId, characters }) => {
         if (!chatId || !Array.isArray(characters)) return;
-
         const chat = loadChat(userId, chatId);
         chat.characters = characters;
-
         saveChat(userId, chatId, chat);
         socket.emit("load chat", { chatId, ...chat });
     });
 
-    /* WORLD */
     socket.on("update world", ({ chatId, worldScenario }) => {
         if (!chatId) return;
-
         const chat = loadChat(userId, chatId);
         chat.worldScenario = worldScenario;
-
         saveChat(userId, chatId, chat);
         socket.emit("load chat", { chatId, ...chat });
     });
 
-    /* CHAT MESSAGE */
+    /* CLEAR CHAT HISTORY */
+    socket.on("clear chat", (chatId) => {
+        if (!chatId) return;
+        const chat = loadChat(userId, chatId);
+        chat.messages = []; // Purge message stack arrays
+        saveChat(userId, chatId, chat);
+        socket.emit("load chat", { chatId, ...chat });
+    });
+
+    /* STREAMING CHAT MESSAGE INTERACTION ENGINE */
     socket.on("chat message", async (data) => {
         const { chatId, message } = data;
-
         if (!chatId || !message) return;
 
         const chat = loadChat(userId, chatId);
+        chat.messages.push({ role: "user", content: message });
 
-        chat.messages.push({
-            role: "user",
-            content: message
-        });
+        const activeChars = (chat.characters || []).filter(char => char.enabled);
+        
+        // Dynamic structural text labeling computation for dynamic identity delivery
+        let identityLabel = "Assistant";
+        if (activeChars.length > 0) {
+            identityLabel = activeChars.map(c => c.name).join(" & ");
+        }
 
-        // Collect instructions from enabled items only
-        const systemMessages = (chat.characters || [])
-            .filter(char => char.enabled)
-            .map(char => ({
-                role: "system",
-                content: `Character Name: ${char.name}\nInstructions: ${char.text}`
-            }));
+        const systemMessages = activeChars.map(char => ({
+            role: "system",
+            content: `Your name identity label is: ${char.name}. Instruction criteria parameters: ${char.text}`
+        }));
 
         if (chat.worldScenario) {
             systemMessages.push({ role: "system", content: chat.worldScenario });
         }
 
+        // Format history payloads stripping custom frontend visualization nodes
+        const cleanHistoryPayload = chat.messages.map(m => ({
+            role: m.role === "user" ? "user" : "assistant",
+            content: m.content
+        }));
+
         try {
-            const completion = await grok.chat.completions.create({
+            const stream = await grok.chat.completions.create({
                 model: "grok-4-1-fast-non-reasoning",
-                messages: [
-                    ...systemMessages,
-                    ...chat.messages
-                ]
+                messages: [...systemMessages, ...cleanHistoryPayload],
+                stream: true,
             });
 
-            const reply = completion.choices[0].message.content;
+            let fullReplyText = "";
 
+            for await (const chunk of stream) {
+                const textChunk = chunk.choices[0]?.delta?.content || "";
+                if (textChunk) {
+                    fullReplyText += textChunk;
+                    // Emit chunk updates in real time to the socket interface client
+                    socket.emit("stream chunk", {
+                        chatId,
+                        textChunk,
+                        identityLabel
+                    });
+                }
+            }
+
+            // Save the finalized string into history records post-stream complete
             chat.messages.push({
                 role: "assistant",
-                content: reply
+                displayName: identityLabel,
+                content: fullReplyText
             });
-
             saveChat(userId, chatId, chat);
 
-            socket.emit("chat response", {
-                chatId,
-                message: reply
-            });
+            socket.emit("stream complete", { chatId });
+
         } catch (err) {
-            console.error("AI Error:", err);
+            console.error("Streaming API Processing Error:", err);
             socket.emit("chat response", {
                 chatId,
-                message: "Error connecting to AI service."
+                message: "Error processing dynamic streaming responses."
             });
         }
     });
