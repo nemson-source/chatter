@@ -205,6 +205,12 @@ function autoResize(el) {
 
 function closeModal() { document.getElementById("modal").style.display = "none"; }
 
+/* ADDED: Helper to instantly dismiss the mobile side drawer panel */
+function closeMobileSidebar() {
+    document.getElementById("sidebar").classList.remove("open");
+    document.getElementById("sidebarOverlay").classList.remove("open");
+}
+
 function openLightbox(src) {
     const lb = document.getElementById("lightbox");
     const lbImg = document.getElementById("lightboxImg");
@@ -221,7 +227,6 @@ function renderItemList() {
     
     const type = document.getElementById("modal").dataset.type;
 
-    /* UPDATED: Modal switching structure to isolate character vs scenario vs extra info view */
     if (type === "extrainfo") {
         const infoWrapper = document.createElement("div");
         infoWrapper.style.display = "flex";
@@ -239,7 +244,6 @@ function renderItemList() {
         txt.value = chatData.extraInfo || "";
         txt.placeholder = "Enter facts, rules, constraints or lore updates here for the AI to instantly remember...";
         
-        // Auto-saves layout properties cleanly as you write context definitions
         txt.oninput = () => {
             chatData.extraInfo = txt.value;
             socket.emit("update extra info", { chatId: currentChat, extraInfo: txt.value });
@@ -352,7 +356,6 @@ function openModal(type) {
         avatarUpload.style.display = "none";
         inputGroupZone.style.display = "flex";
     } else {
-        /* UPDATED: Extra Info UI Layout Configuration Setup */
         document.getElementById("modalTitle").innerText = "Extra Information Layer";
         inputGroupZone.style.display = "none";
     }
@@ -366,7 +369,7 @@ document.getElementById("extraInfoBtn").onclick = () => openModal("extrainfo");
 document.getElementById("save").onclick = () => {
     if (!chatData || !currentChat) return;
     const type = document.getElementById("modal").dataset.type;
-    if (type === "extrainfo") return; // Saved dynamically inline via keypress/input events
+    if (type === "extrainfo") return;
 
     const name = document.getElementById("newNameInput").value.trim();
     const text = document.getElementById("newTextInput").value.trim();
@@ -456,7 +459,11 @@ socket.on("chats list", (chats) => {
         
         const lnk = document.createElement("div"); lnk.className = "chat-item-link"; lnk.innerText = item.name;
         
-        row.onclick = () => socket.emit("open chat", item.id);
+        /* UPDATED: Closes the sidebar smoothly on selection action triggers */
+        row.onclick = () => {
+            socket.emit("open chat", item.id);
+            closeMobileSidebar();
+        };
         
         row.ondblclick = (e) => {
             e.stopPropagation();
@@ -546,10 +553,20 @@ socket.on("stream chunk", (data) => {
 });
 
 socket.on("stream complete", () => { activeStreamNode = null; });
-document.getElementById("newChat").onclick = () => socket.emit("new chat");
+
+/* UPDATED: Added side menu closing effect to the new chat generator trigger */
+document.getElementById("newChat").onclick = () => {
+    socket.emit("new chat");
+    closeMobileSidebar();
+};
+
+document.getElementById("sidebarOverlay").onclick = () => closeMobileSidebar();
 document.getElementById("logoutBtn").onclick = () => { localStorage.removeItem("sync_key"); window.location.reload(); };
 document.getElementById("clearLogsBtn").onclick = () => { if(confirm("Clear logs?")) socket.emit("update characters", { chatId: currentChat, characters: chatData.characters, clearLogTrack: true }); };
-document.getElementById("menuToggle").onclick = () => document.getElementById("sidebar").classList.toggle("open");
+document.getElementById("menuToggle").onclick = () => {
+    document.getElementById("sidebar").classList.toggle("open");
+    document.getElementById("sidebarOverlay").classList.toggle("open");
+};
 </script>
 </body>
 </html>
