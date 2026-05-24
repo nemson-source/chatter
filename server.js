@@ -35,7 +35,7 @@ function chatPath(userId, chatId) {
 function loadChat(userId, chatId) {
     const file = chatPath(userId, chatId);
     if (!fs.existsSync(file)) {
-        return { name: "", characters: [], scenarios: [], messages: [] };
+        return { name: "", characters: [], scenarios: [], extraInfo: "", messages: [] };
     }
     try {
         const data = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -43,9 +43,10 @@ function loadChat(userId, chatId) {
         if (!data.characters) data.characters = [];
         if (!data.messages) data.messages = [];
         if (!data.name) data.name = "";
+        if (!data.extraInfo) data.extraInfo = ""; // Fallback context
         return data;
     } catch (e) {
-        return { name: "", characters: [], scenarios: [], messages: [] };
+        return { name: "", characters: [], scenarios: [], extraInfo: "", messages: [] };
     }
 }
 
@@ -89,7 +90,7 @@ io.on("connection", (socket) => {
 
     socket.on("new chat", () => {
         const id = `chat-${Date.now()}`;
-        saveChat(userId, id, { name: "", characters: [], scenarios: [], messages: [] });
+        saveChat(userId, id, { name: "", characters: [], scenarios: [], extraInfo: "", messages: [] });
         userActiveChatState[userId] = id;
         io.to(userId).emit("chats list", listChats(userId));
         io.to(userId).emit("active chat lock", id);
@@ -103,7 +104,6 @@ io.on("connection", (socket) => {
         io.to(userId).emit("load chat", { chatId, ...loadChat(userId, chatId) });
     });
 
-    /* ADDED: Missing Bulk Deletion Backend Protocol */
     socket.on("delete selected chats", (chatIds) => {
         if (!Array.isArray(chatIds)) return;
         chatIds.forEach(id => {
@@ -111,13 +111,11 @@ io.on("connection", (socket) => {
             if (fs.existsSync(file)) {
                 fs.unlinkSync(file);
             }
-            // Clear current selection state if it was deleted
             if (userActiveChatState[userId] === id) {
                 delete userActiveChatState[userId];
             }
         });
         
-        // Refresh client context completely
         const remainingChats = listChats(userId);
         io.to(userId).emit("chats list", remainingChats);
         
@@ -127,7 +125,7 @@ io.on("connection", (socket) => {
             io.to(userId).emit("active chat lock", fallbackId);
             io.to(userId).emit("load chat", { chatId: fallbackId, ...loadChat(userId, fallbackId) });
         } else if (remainingChats.length === 0) {
-            io.to(userId).emit("load chat", { chatId: null, messages: [], characters: [], scenarios: [] });
+            io.to(userId).emit("load chat", { chatId: null, messages: [], characters: [], scenarios: [], extraInfo: "" });
         }
     });
 
@@ -150,6 +148,15 @@ io.on("connection", (socket) => {
         io.to(userId).emit("load chat", { chatId, ...chat });
     });
 
+    /* ADDED: Missing listener to save random auxiliary context details */
+    socket.on("update extra info", ({ chatId, extraInfo }) => {
+        if (!chatId) return;
+        const chat = loadChat(userId, chatId);
+        chat.extraInfo = extraInfo || "";
+        saveChat(userId, chatId, chat);
+        io.to(userId).emit("load chat", { chatId, ...chat });
+    });
+
     socket.on("chat message", async (data) => {
         const { chatId, message } = data;
         if (!chatId || !message) return;
@@ -168,6 +175,11 @@ io.on("connection", (socket) => {
 
         activeChars.forEach(char => systemMessages.push({ role: "system", content: `Character: ${char.name}. Instructions: ${char.text}` }));
         if (activeScenario) systemMessages.push({ role: "system", content: `World Context (${activeScenario.name}): ${activeScenario.text}` });
+        
+        /* ADDED: Inject custom temporary auxiliary context instruction framework block */
+        if (chat.extraInfo && chat.extraInfo.trim() !== "") {
+            systemMessages.push({ role: "system", content: `ADDITIONAL TEMPORARY DIRECTIVES/EXTRA INFO: ${chat.extraInfo}` });
+        }
 
         const history = chat.messages.map(m => ({ role: m.role === "user" ? "user" : "assistant", content: m.content }));
 
