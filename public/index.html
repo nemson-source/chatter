@@ -80,6 +80,17 @@ body {
 .item-checkbox { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
 .btn-del { background: #cc241d; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; }
 
+/* CHARACTER AVATAR THUMBNAILS */
+.item-avatar { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; background: #444; border: 1px solid var(--border-color); flex-shrink: 0; cursor: pointer; transition: transform 0.2s ease; }
+.item-avatar:hover { transform: scale(1.08); }
+.avatar-placeholder { width: 36px; height: 36px; border-radius: 50%; background: #444; display: flex; align-items: center; justify-content: center; font-size: 18px; color: var(--text-secondary); flex-shrink: 0; }
+
+/* LIGHTBOX FOR BIG IMAGE VIEW */
+#lightbox { display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.85); z-index: 20000; align-items: center; justify-content: center; cursor: zoom-out; opacity: 0; transition: opacity 0.2s ease-in-out; }
+#lightbox.show { display: flex; opacity: 1; }
+#lightboxImg { max-width: 90%; max-height: 90%; border-radius: 8px; box-shadow: 0 8px 32px rgba(0,0,0,0.5); transform: scale(0.95); transition: transform 0.2s ease-in-out; cursor: default; }
+#lightbox.show #lightboxImg { transform: scale(1); }
+
 /* EDIT FIELD */
 .auto-edit-field { width: 100%; background: #111; border: 1px solid var(--accent); color: white; padding: 10px; border-radius: 6px; font-family: inherit; font-size: 13px; resize: none; overflow: hidden; outline: none; }
 
@@ -106,7 +117,6 @@ body {
 <div id="sidebar">
     <div class="sidebar-header-actions">
         <button id="newChat"><span>New Chat</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg></button>
-        <button id="massDeleteBtn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>
     </div>
     <div id="chatList"></div>
 </div>
@@ -134,12 +144,18 @@ body {
         <h3 id="modalTitle">Setup</h3>
         <div id="item-list-zone"></div>
         <div id="new-item-inputs" class="input-group">
-            <label>Name</label><input type="text" id="newNameInput" />
-            <label>Instructions</label><textarea id="newTextInput" rows="2"></textarea>
+            <label id="nameLabel">Name</label><input type="text" id="newNameInput" />
+            <div id="avatarUploadContainer" style="display:flex; flex-direction:column; gap:4px; margin-bottom:8px;">
+                <label>Avatar Picture</label>
+                <input type="file" id="newAvatarInput" accept="image/*" style="font-size:12px;" />
+            </div>
+            <label id="textLabel">Instructions</label><textarea id="newTextInput" rows="2"></textarea>
         </div>
         <div class="modal-actions"><button class="cfg-btn" onclick="closeModal()">Close</button><button id="save">Add New</button></div>
     </div>
 </div>
+
+<div id="lightbox"><img id="lightboxImg" src="" alt="Avatar View" /></div>
 
 <script src="/socket.io/socket.io.js"></script>
 <script>
@@ -156,7 +172,6 @@ const socket = io({ auth: { userId: getSyncKey() } });
 let currentChat = null, chatData = null, activeStreamNode = null, activeStreamText = "";
 
 const chatDiv = document.getElementById("chat");
-
 marked.setOptions({ breaks: true, gfm: true });
 
 function autoResize(el) {
@@ -165,6 +180,21 @@ function autoResize(el) {
 }
 
 function closeModal() { document.getElementById("modal").style.display = "none"; }
+
+/* Lightbox Open/Close Helpers */
+function openLightbox(src) {
+    const lb = document.getElementById("lightbox");
+    const lbImg = document.getElementById("lightboxImg");
+    lbImg.src = src;
+    lb.classList.add("show");
+}
+document.getElementById("lightbox").onclick = function() {
+    this.classList.remove("show");
+};
+// Stop clicks on the image itself from accidentally closing it
+document.getElementById("lightboxImg").onclick = function(e) {
+    e.stopPropagation();
+};
 
 function renderItemList() {
     const zone = document.getElementById("item-list-zone");
@@ -195,6 +225,25 @@ function renderItemList() {
                 socket.emit("update world", { chatId: currentChat, scenarios: items });
             }
         };
+
+        if (type === "character") {
+            if (item.avatar) {
+                const img = document.createElement("img");
+                img.className = "item-avatar";
+                img.src = item.avatar;
+                // Click to trigger large image view
+                img.onclick = (e) => {
+                    e.stopPropagation();
+                    openLightbox(item.avatar);
+                };
+                header.appendChild(img);
+            } else {
+                const placeholder = document.createElement("div");
+                placeholder.className = "avatar-placeholder";
+                placeholder.innerText = item.name ? item.name.charAt(0).toUpperCase() : "?";
+                header.appendChild(placeholder);
+            }
+        }
 
         const nameInput = document.createElement("input");
         nameInput.className = "item-name";
@@ -243,12 +292,25 @@ function renderItemList() {
 function openModal(type) {
     const m = document.getElementById("modal");
     m.style.display = "flex"; m.dataset.type = type;
-    document.getElementById("modalTitle").innerText = type === "character" ? "Characters" : "World Scenarios";
+    
+    const avatarUpload = document.getElementById("avatarUploadContainer");
+    document.getElementById("newAvatarInput").value = "";
+    
+    if (type === "character") {
+        document.getElementById("modalTitle").innerText = "Characters";
+        document.getElementById("textLabel").innerText = "Instructions";
+        avatarUpload.style.display = "flex";
+    } else {
+        document.getElementById("modalTitle").innerText = "World Scenarios";
+        document.getElementById("textLabel").innerText = "Context Description";
+        avatarUpload.style.display = "none";
+    }
     renderItemList();
 }
 
 document.getElementById("charBtn").onclick = () => openModal("character");
 document.getElementById("worldBtn").onclick = () => openModal("world");
+
 document.getElementById("save").onclick = () => {
     if (!chatData || !currentChat) return;
     const type = document.getElementById("modal").dataset.type;
@@ -257,15 +319,35 @@ document.getElementById("save").onclick = () => {
     if (!name || !text) return;
     
     if (type === "character") {
-        const list = [...(chatData.characters || []), { name, text, enabled: true }];
-        socket.emit("update characters", { chatId: currentChat, characters: list });
+        const fileInput = document.getElementById("newAvatarInput");
+        const file = fileInput.files[0];
+        
+        if (file) {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                const list = [...(chatData.characters || []), { name, text, enabled: true, avatar: reader.result }];
+                socket.emit("update characters", { chatId: currentChat, characters: list });
+                clearFormInputs();
+            };
+            reader.readAsDataURL(file);
+        } else {
+            const list = [...(chatData.characters || []), { name, text, enabled: true, avatar: null }];
+            socket.emit("update characters", { chatId: currentChat, characters: list });
+            clearFormInputs();
+        }
     } else {
         const list = (chatData.scenarios || []).map(s => ({...s, active: false}));
         list.push({ name, text, active: true });
         socket.emit("update world", { chatId: currentChat, scenarios: list });
+        clearFormInputs();
     }
-    document.getElementById("newNameInput").value = ""; document.getElementById("newTextInput").value = "";
 };
+
+function clearFormInputs() {
+    document.getElementById("newNameInput").value = ""; 
+    document.getElementById("newTextInput").value = "";
+    document.getElementById("newAvatarInput").value = "";
+}
 
 function appendMessage(role, content, name) {
     const wrap = document.createElement("div");
@@ -282,15 +364,11 @@ function appendMessage(role, content, name) {
     return body;
 }
 
-// Fixed Unified Submission Handler
 document.getElementById("form").onsubmit = (e) => {
     e.preventDefault();
-    
     const msgInput = document.getElementById("message");
     const msg = msgInput.value.trim();
-    
     if (!msg || !currentChat) return;
-    
     appendMessage("user", msg);
     socket.emit("chat message", { chatId: currentChat, message: msg });
     msgInput.value = "";
@@ -325,20 +403,14 @@ socket.on("load chat", (chat) => {
 
 socket.on("stream chunk", (data) => {
     if (data.chatId !== currentChat) return;
-    
     const isAtBottom = chatDiv.scrollHeight - chatDiv.clientHeight <= chatDiv.scrollTop + 60;
-    
     if (!activeStreamNode) { 
         activeStreamText = ""; 
         activeStreamNode = appendMessage("ai", "", data.identityLabel); 
     }
-    
     activeStreamText += data.textChunk;
     activeStreamNode.innerHTML = marked.parse(activeStreamText);
-    
-    if (isAtBottom) {
-        chatDiv.scrollTop = chatDiv.scrollHeight;
-    }
+    if (isAtBottom) chatDiv.scrollTop = chatDiv.scrollHeight;
 });
 
 socket.on("stream complete", () => { activeStreamNode = null; });
