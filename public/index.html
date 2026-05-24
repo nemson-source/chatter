@@ -40,7 +40,6 @@ body {
 #chatList { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
 .chat-item-wrapper { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 8px; transition: all 0.2s ease; border: 1px solid transparent; }
 
-/* UPDATED: Clear Visual Color Shift for Opened Active Chat Row */
 .chat-item-wrapper.active { 
     background: rgba(16, 163, 127, 0.15) !important; 
     border-color: var(--accent) !important; 
@@ -151,6 +150,7 @@ body {
         <div class="topbar-controls">
             <button class="cfg-btn" id="charBtn">Characters</button>
             <button class="cfg-btn" id="worldBtn">Scenarios</button>
+            <button class="cfg-btn" id="extraInfoBtn" style="border-color: #555;">Extra Info</button>
             <button class="cfg-btn" id="logoutBtn" style="border-color:#cc241d;color:#ff6b6b;">Sync Key</button>
         </div>
     </div>
@@ -220,6 +220,36 @@ function renderItemList() {
     if (!chatData) return;
     
     const type = document.getElementById("modal").dataset.type;
+
+    /* UPDATED: Modal switching structure to isolate character vs scenario vs extra info view */
+    if (type === "extrainfo") {
+        const infoWrapper = document.createElement("div");
+        infoWrapper.style.display = "flex";
+        infoWrapper.style.flexDirection = "column";
+        infoWrapper.style.gap = "8px";
+
+        const label = document.createElement("label");
+        label.innerText = "Inject Extra Variable Context Knowledge:";
+        label.style.fontSize = "12px";
+        label.style.color = "var(--text-secondary)";
+
+        const txt = document.createElement("textarea");
+        txt.className = "auto-edit-field";
+        txt.style.minHeight = "180px";
+        txt.value = chatData.extraInfo || "";
+        txt.placeholder = "Enter facts, rules, constraints or lore updates here for the AI to instantly remember...";
+        
+        // Auto-saves layout properties cleanly as you write context definitions
+        txt.oninput = () => {
+            chatData.extraInfo = txt.value;
+            socket.emit("update extra info", { chatId: currentChat, extraInfo: txt.value });
+        };
+
+        infoWrapper.append(label, txt);
+        zone.appendChild(infoWrapper);
+        return;
+    }
+
     const items = type === "character" ? (chatData.characters || []) : (chatData.scenarios || []);
 
     items.forEach((item, idx) => {
@@ -306,27 +336,38 @@ function renderItemList() {
 function openModal(type) {
     const m = document.getElementById("modal");
     m.style.display = "flex"; m.dataset.type = type;
+    
     const avatarUpload = document.getElementById("avatarUploadContainer");
+    const inputGroupZone = document.getElementById("new-item-inputs");
     document.getElementById("newAvatarInput").value = "";
     
     if (type === "character") {
         document.getElementById("modalTitle").innerText = "Characters";
         document.getElementById("textLabel").innerText = "Instructions";
         avatarUpload.style.display = "flex";
-    } else {
+        inputGroupZone.style.display = "flex";
+    } else if (type === "world") {
         document.getElementById("modalTitle").innerText = "World Scenarios";
         document.getElementById("textLabel").innerText = "Context Description";
         avatarUpload.style.display = "none";
+        inputGroupZone.style.display = "flex";
+    } else {
+        /* UPDATED: Extra Info UI Layout Configuration Setup */
+        document.getElementById("modalTitle").innerText = "Extra Information Layer";
+        inputGroupZone.style.display = "none";
     }
     renderItemList();
 }
 
 document.getElementById("charBtn").onclick = () => openModal("character");
 document.getElementById("worldBtn").onclick = () => openModal("world");
+document.getElementById("extraInfoBtn").onclick = () => openModal("extrainfo");
 
 document.getElementById("save").onclick = () => {
     if (!chatData || !currentChat) return;
     const type = document.getElementById("modal").dataset.type;
+    if (type === "extrainfo") return; // Saved dynamically inline via keypress/input events
+
     const name = document.getElementById("newNameInput").value.trim();
     const text = document.getElementById("newTextInput").value.trim();
     if (!name || !text) return;
@@ -386,7 +427,6 @@ document.getElementById("form").onsubmit = (e) => {
     msgInput.value = "";
 };
 
-/* Evaluates Checkboxes to Show/Hide/Block actions */
 function evaluateCheckboxState() {
     const checkedBoxes = document.querySelectorAll(".delete-checkbox:checked");
     const actionContainer = document.getElementById("selectionActionBar");
@@ -438,7 +478,6 @@ socket.on("chats list", (chats) => {
     evaluateCheckboxState();
 });
 
-/* Context Action: Bulk Delete Selected Items */
 document.getElementById("massDeleteBtn").onclick = () => {
     const checkedBoxes = document.querySelectorAll(".delete-checkbox:checked");
     if (checkedBoxes.length === 0) return;
@@ -449,7 +488,6 @@ document.getElementById("massDeleteBtn").onclick = () => {
     }
 };
 
-/* Context Action: Single-Selection Rename Management */
 document.getElementById("massRenameBtn").onclick = () => {
     const checkedBoxes = document.querySelectorAll(".delete-checkbox:checked");
     if (checkedBoxes.length !== 1) return;
@@ -464,10 +502,8 @@ document.getElementById("massRenameBtn").onclick = () => {
     }
 };
 
-/* UPDATED: Active state routing without infinite loops */
 socket.on("active chat lock", (chatId) => {
     currentChat = chatId;
-    // Rerender styling and status badges cleanly across components
     const elements = document.querySelectorAll(".chat-item-wrapper");
     elements.forEach(el => {
         const cb = el.querySelector(".delete-checkbox");
