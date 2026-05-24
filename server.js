@@ -103,6 +103,34 @@ io.on("connection", (socket) => {
         io.to(userId).emit("load chat", { chatId, ...loadChat(userId, chatId) });
     });
 
+    /* ADDED: Missing Bulk Deletion Backend Protocol */
+    socket.on("delete selected chats", (chatIds) => {
+        if (!Array.isArray(chatIds)) return;
+        chatIds.forEach(id => {
+            const file = chatPath(userId, id);
+            if (fs.existsSync(file)) {
+                fs.unlinkSync(file);
+            }
+            // Clear current selection state if it was deleted
+            if (userActiveChatState[userId] === id) {
+                delete userActiveChatState[userId];
+            }
+        });
+        
+        // Refresh client context completely
+        const remainingChats = listChats(userId);
+        io.to(userId).emit("chats list", remainingChats);
+        
+        if (remainingChats.length > 0 && !userActiveChatState[userId]) {
+            const fallbackId = remainingChats[0].id;
+            userActiveChatState[userId] = fallbackId;
+            io.to(userId).emit("active chat lock", fallbackId);
+            io.to(userId).emit("load chat", { chatId: fallbackId, ...loadChat(userId, fallbackId) });
+        } else if (remainingChats.length === 0) {
+            io.to(userId).emit("load chat", { chatId: null, messages: [], characters: [], scenarios: [] });
+        }
+    });
+
     socket.on("update characters", ({ chatId, characters, clearLogTrack }) => {
         if (!chatId) return;
         const chat = loadChat(userId, chatId);
