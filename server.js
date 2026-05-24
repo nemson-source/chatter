@@ -36,15 +36,16 @@ function chatPath(userId, chatId) {
 function loadChat(userId, chatId) {
     const file = chatPath(userId, chatId);
     if (!fs.existsSync(file)) {
-        return { characters: [], worldScenario: "", messages: [] };
+        return { name: "", characters: [], worldScenario: "", messages: [] };
     }
     try {
         const data = JSON.parse(fs.readFileSync(file, "utf8"));
         if (!data.characters) data.characters = [];
         if (!data.messages) data.messages = [];
+        if (!data.name) data.name = "";
         return data;
     } catch (e) {
-        return { characters: [], worldScenario: "", messages: [] };
+        return { name: "", characters: [], worldScenario: "", messages: [] };
     }
 }
 
@@ -62,6 +63,13 @@ function listChats(userId) {
             .filter(f => f.endsWith(".json"))
             .map(f => {
                 const id = f.replace(".json", "");
+                
+                // Read inside file to see if a custom name override exists
+                const fileData = loadChat(userId, id);
+                if (fileData.name && fileData.name.trim() !== "") {
+                    return { id, name: fileData.name };
+                }
+
                 let name = id;
                 if (id.startsWith("chat-")) {
                     const timestamp = parseInt(id.split("-")[1]);
@@ -99,7 +107,7 @@ io.on("connection", (socket) => {
 
     socket.on("new chat", () => {
         const id = `chat-${Date.now()}`;
-        saveChat(userId, id, { characters: [], worldScenario: "", messages: [] });
+        saveChat(userId, id, { name: "", characters: [], worldScenario: "", messages: [] });
         userActiveChatState[userId] = id;
         
         io.to(userId).emit("chats list", listChats(userId));
@@ -135,19 +143,35 @@ io.on("connection", (socket) => {
         }
     });
 
-    socket.on("update characters", ({ chatId, characters }) => {
+    // Modified to accept a clearLogTrack signal while preserving configuration models
+    socket.on("update characters", ({ chatId, characters, clearLogTrack }) => {
         if (!chatId) return;
         const chat = loadChat(userId, chatId);
         chat.characters = characters;
+        
+        if (clearLogTrack) {
+            chat.messages = []; // Clean chat logs exclusively
+        }
+        
         saveChat(userId, chatId, chat);
         io.to(userId).emit("load chat", { chatId, ...chat });
     });
 
-    socket.on("update world", ({ chatId, worldScenario }) => {
+    // Modified to track customName parameters sent via UI title double-clicks
+    socket.on("update world", ({ chatId, worldScenario, customName }) => {
         if (!chatId) return;
         const chat = loadChat(userId, chatId);
         chat.worldScenario = worldScenario;
+        
+        if (customName !== undefined) {
+            chat.name = customName;
+        }
+        
         saveChat(userId, chatId, chat);
+
+        if (customName) {
+            io.to(userId).emit("chats list", listChats(userId));
+        }
         io.to(userId).emit("load chat", { chatId, ...chat });
     });
 
@@ -158,7 +182,7 @@ io.on("connection", (socket) => {
         const chat = loadChat(userId, chatId);
         chat.messages.push({ role: "user", content: message });
 
-        const activeChars = (chat.characters || []).filter(char => char.enabled);
+        const activeChars = (chat.characters || []).filter(char => char.enabled || char.enabled === undefined);
         let identityLabel = "Assistant";
         if (activeChars.length > 0) {
             identityLabel = activeChars.map(c => c.name).join(" & ");
