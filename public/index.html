@@ -28,16 +28,36 @@ body {
     width: 280px; background: var(--bg-sidebar); display: flex; flex-direction: column; padding: 12px;
     border-right: 1px solid var(--border-color); transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1); z-index: 1000;
 }
-.sidebar-header-actions { display: flex; gap: 8px; margin-bottom: 12px; }
+.sidebar-header-actions { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; }
 #newChat { flex: 1; padding: 12px; background: transparent; border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-primary); cursor: pointer; display: flex; align-items: center; justify-content: space-between; }
-#massDeleteBtn { background: transparent; border: 1px solid #cc241d; color: #ff6b6b; border-radius: 8px; padding: 0 12px; cursor: pointer; display: none; align-items: center; justify-content: center; }
-#chatList { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
-.chat-item-wrapper { display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 8px; }
-.chat-item-wrapper.active { background: var(--bg-main); }
-.delete-checkbox { width: 18px; height: 18px; accent-color: #cc241d; cursor: pointer; }
-.chat-item-link { flex: 1; cursor: pointer; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-primary); }
 
-/* MAIN */
+/* SELECTION MANAGEMENT BAR */
+#selectionActionBar { display: none; gap: 6px; }
+.action-bar-btn { background: transparent; border: 1px solid var(--border-color); border-radius: 8px; height: 43px; padding: 0 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+#massDeleteBtn { border-color: #cc241d; color: #ff6b6b; }
+#massRenameBtn { border-color: var(--accent); color: var(--accent); }
+
+#chatList { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.chat-item-wrapper { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 8px; transition: all 0.2s ease; border: 1px solid transparent; }
+
+/* UPDATED: Clear Visual Color Shift for Opened Active Chat Row */
+.chat-item-wrapper.active { 
+    background: rgba(16, 163, 127, 0.15) !important; 
+    border-color: var(--accent) !important; 
+}
+.chat-item-wrapper.active .chat-item-link {
+    color: white !important;
+    font-weight: 500;
+}
+
+.delete-checkbox { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; flex-shrink: 0; }
+.chat-item-link { flex: 1; cursor: pointer; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-primary); padding: 2px 0; }
+
+/* OPEN ACTIVE CHAT BADGE */
+.active-badge { font-size: 10px; color: var(--accent); background: rgba(16, 163, 127, 0.25); padding: 2px 6px; border-radius: 10px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.active-badge::before { content: "●"; font-size: 8px; color: var(--accent); }
+
+/* MAIN CONTAINER Layout */
 #main { flex: 1; display: flex; flex-direction: column; height: 100%; position: relative; min-width: 0; }
 #topbar { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; background: var(--bg-main); border-bottom: 1px solid var(--border-color); flex-shrink: 0; }
 .nav-toggle-btn { display: none; background: transparent; border: 1px solid var(--border-color); color: var(--text-primary); padding: 8px; border-radius: 6px; cursor: pointer; }
@@ -117,6 +137,10 @@ body {
 <div id="sidebar">
     <div class="sidebar-header-actions">
         <button id="newChat"><span>New Chat</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg></button>
+        <div id="selectionActionBar">
+            <button id="massRenameBtn" class="action-bar-btn" title="Rename Selected"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg></button>
+            <button id="massDeleteBtn" class="action-bar-btn" title="Delete Selected"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>
+        </div>
     </div>
     <div id="chatList"></div>
 </div>
@@ -181,20 +205,14 @@ function autoResize(el) {
 
 function closeModal() { document.getElementById("modal").style.display = "none"; }
 
-/* Lightbox Open/Close Helpers */
 function openLightbox(src) {
     const lb = document.getElementById("lightbox");
     const lbImg = document.getElementById("lightboxImg");
     lbImg.src = src;
     lb.classList.add("show");
 }
-document.getElementById("lightbox").onclick = function() {
-    this.classList.remove("show");
-};
-// Stop clicks on the image itself from accidentally closing it
-document.getElementById("lightboxImg").onclick = function(e) {
-    e.stopPropagation();
-};
+document.getElementById("lightbox").onclick = function() { this.classList.remove("show"); };
+document.getElementById("lightboxImg").onclick = function(e) { e.stopPropagation(); };
 
 function renderItemList() {
     const zone = document.getElementById("item-list-zone");
@@ -231,11 +249,7 @@ function renderItemList() {
                 const img = document.createElement("img");
                 img.className = "item-avatar";
                 img.src = item.avatar;
-                // Click to trigger large image view
-                img.onclick = (e) => {
-                    e.stopPropagation();
-                    openLightbox(item.avatar);
-                };
+                img.onclick = (e) => { e.stopPropagation(); openLightbox(item.avatar); };
                 header.appendChild(img);
             } else {
                 const placeholder = document.createElement("div");
@@ -292,7 +306,6 @@ function renderItemList() {
 function openModal(type) {
     const m = document.getElementById("modal");
     m.style.display = "flex"; m.dataset.type = type;
-    
     const avatarUpload = document.getElementById("avatarUploadContainer");
     document.getElementById("newAvatarInput").value = "";
     
@@ -321,7 +334,6 @@ document.getElementById("save").onclick = () => {
     if (type === "character") {
         const fileInput = document.getElementById("newAvatarInput");
         const file = fileInput.files[0];
-        
         if (file) {
             const reader = new FileReader();
             reader.onloadend = () => {
@@ -374,20 +386,104 @@ document.getElementById("form").onsubmit = (e) => {
     msgInput.value = "";
 };
 
+/* Evaluates Checkboxes to Show/Hide/Block actions */
+function evaluateCheckboxState() {
+    const checkedBoxes = document.querySelectorAll(".delete-checkbox:checked");
+    const actionContainer = document.getElementById("selectionActionBar");
+    const renameBtn = document.getElementById("massRenameBtn");
+    
+    if (checkedBoxes.length === 0) {
+        actionContainer.style.display = "none";
+    } else {
+        actionContainer.style.display = "flex";
+        renameBtn.style.display = (checkedBoxes.length === 1) ? "flex" : "none";
+    }
+}
+
 socket.on("chats list", (chats) => {
     const list = document.getElementById("chatList"); list.innerHTML = "";
     chats.forEach(item => {
         const row = document.createElement("div"); row.className = "chat-item-wrapper";
-        if (currentChat === item.id) row.classList.add("active");
+        
+        const isCurrent = (currentChat === item.id);
+        if (isCurrent) row.classList.add("active");
+        
         const chk = document.createElement("input"); chk.type = "checkbox"; chk.className = "delete-checkbox"; chk.dataset.id = item.id;
-        chk.onchange = () => document.getElementById("massDeleteBtn").style.display = document.querySelectorAll(".delete-checkbox:checked").length ? "flex" : "none";
+        chk.dataset.name = item.name;
+        
+        chk.onclick = (e) => { e.stopPropagation(); };
+        chk.onchange = evaluateCheckboxState;
+        
         const lnk = document.createElement("div"); lnk.className = "chat-item-link"; lnk.innerText = item.name;
-        lnk.onclick = () => socket.emit("open chat", item.id);
-        lnk.ondblclick = () => {
+        
+        row.onclick = () => socket.emit("open chat", item.id);
+        
+        row.ondblclick = (e) => {
+            e.stopPropagation();
             const n = prompt("Rename chat:", item.name);
             if (n) socket.emit("update world", { chatId: item.id, customName: n });
         };
-        row.append(chk, lnk); list.append(row);
+        
+        row.append(chk, lnk);
+
+        if (isCurrent) {
+            const badge = document.createElement("span");
+            badge.className = "active-badge";
+            badge.innerText = "Active";
+            row.appendChild(badge);
+        }
+
+        list.append(row);
+    });
+    evaluateCheckboxState();
+});
+
+/* Context Action: Bulk Delete Selected Items */
+document.getElementById("massDeleteBtn").onclick = () => {
+    const checkedBoxes = document.querySelectorAll(".delete-checkbox:checked");
+    if (checkedBoxes.length === 0) return;
+    
+    if (confirm(`Are you sure you want to delete the ${checkedBoxes.length} selected chat(s)?`)) {
+        const idsToDelete = Array.from(checkedBoxes).map(cb => cb.dataset.id);
+        socket.emit("delete selected chats", idsToDelete);
+    }
+};
+
+/* Context Action: Single-Selection Rename Management */
+document.getElementById("massRenameBtn").onclick = () => {
+    const checkedBoxes = document.querySelectorAll(".delete-checkbox:checked");
+    if (checkedBoxes.length !== 1) return;
+    
+    const targetCheckbox = checkedBoxes[0];
+    const targetId = targetCheckbox.dataset.id;
+    const oldName = targetCheckbox.dataset.name;
+    
+    const newName = prompt("Rename selected chat:", oldName);
+    if (newName && newName.trim() !== "") {
+        socket.emit("update world", { chatId: targetId, customName: newName.trim() });
+    }
+};
+
+/* UPDATED: Active state routing without infinite loops */
+socket.on("active chat lock", (chatId) => {
+    currentChat = chatId;
+    // Rerender styling and status badges cleanly across components
+    const elements = document.querySelectorAll(".chat-item-wrapper");
+    elements.forEach(el => {
+        const cb = el.querySelector(".delete-checkbox");
+        if (cb && cb.dataset.id === chatId) {
+            el.classList.add("active");
+            if (!el.querySelector(".active-badge")) {
+                const badge = document.createElement("span");
+                badge.className = "active-badge";
+                badge.innerText = "Active";
+                el.appendChild(badge);
+            }
+        } else {
+            el.classList.remove("active");
+            const existingBadge = el.querySelector(".active-badge");
+            if (existingBadge) existingBadge.remove();
+        }
     });
 });
 
