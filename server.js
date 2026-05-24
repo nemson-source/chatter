@@ -148,7 +148,6 @@ io.on("connection", (socket) => {
         io.to(userId).emit("load chat", { chatId, ...chat });
     });
 
-    /* ADDED: Missing listener to save random auxiliary context details */
     socket.on("update extra info", ({ chatId, extraInfo }) => {
         if (!chatId) return;
         const chat = loadChat(userId, chatId);
@@ -176,7 +175,6 @@ io.on("connection", (socket) => {
         activeChars.forEach(char => systemMessages.push({ role: "system", content: `Character: ${char.name}. Instructions: ${char.text}` }));
         if (activeScenario) systemMessages.push({ role: "system", content: `World Context (${activeScenario.name}): ${activeScenario.text}` });
         
-        /* ADDED: Inject custom temporary auxiliary context instruction framework block */
         if (chat.extraInfo && chat.extraInfo.trim() !== "") {
             systemMessages.push({ role: "system", content: `ADDITIONAL TEMPORARY DIRECTIVES/EXTRA INFO: ${chat.extraInfo}` });
         }
