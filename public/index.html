@@ -99,7 +99,6 @@ body {
 .item-checkbox { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
 .btn-del { background: #cc241d; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; }
 
-/* ADDED: Fold/Unfold Toggle Button */
 .fold-toggle-btn { background: transparent; border: none; color: var(--text-secondary); cursor: pointer; font-size: 12px; padding: 4px; display: flex; align-items: center; justify-content: center; transition: color 0.2s; }
 .fold-toggle-btn:hover { color: white; }
 
@@ -224,6 +223,11 @@ document.getElementById("lightbox").onclick = function() { this.classList.remove
 document.getElementById("lightboxImg").onclick = function(e) { e.stopPropagation(); };
 
 function renderItemList() {
+    // If the user is currently typing inside the Extra Info text field, do not overwrite the DOM.
+    if (document.activeElement && document.activeElement.id === "extraInfoTextArea") {
+        return;
+    }
+
     const zone = document.getElementById("item-list-zone");
     zone.innerHTML = "";
     if (!chatData) return;
@@ -242,13 +246,19 @@ function renderItemList() {
         label.style.color = "var(--text-secondary)";
 
         const txt = document.createElement("textarea");
+        txt.id = "extraInfoTextArea";
         txt.className = "auto-edit-field";
         txt.style.minHeight = "180px";
         txt.value = chatData.extraInfo || "";
         txt.placeholder = "Enter facts, rules, constraints or lore updates here for the AI to instantly remember...";
         
+        // Save updates locally on every keystroke
         txt.oninput = () => {
             chatData.extraInfo = txt.value;
+        };
+
+        // ONLY emit to the server on blur (when clicking outside the field) to avoid continuous chat reloading
+        txt.onblur = () => {
             socket.emit("update extra info", { chatId: currentChat, extraInfo: txt.value });
         };
 
@@ -281,12 +291,11 @@ function renderItemList() {
             }
         };
 
-        /* ADDED: Folding dropdown controller arrow for Characters view layout */
         let foldBtn = null;
         if (type === "character") {
             foldBtn = document.createElement("button");
             foldBtn.className = "fold-toggle-btn";
-            foldBtn.innerHTML = "&#x25B8;"; // Right arrow symbol by default (folded)
+            foldBtn.innerHTML = "&#x25B8;"; 
             header.appendChild(foldBtn);
         }
 
@@ -331,22 +340,19 @@ function renderItemList() {
         body.className = "item-body";
         body.innerText = item.text || "(Click to add text)";
         
-        /* UPDATED: Add conditional visibility toggle behaviors for the folding framework */
         if (type === "character") {
-            body.style.display = "none"; // Hide instructions text field block by default
+            body.style.display = "none"; 
             
             foldBtn.onclick = (e) => {
                 e.stopPropagation();
                 if (body.style.display === "none") {
                     body.style.display = "block";
-                    foldBtn.innerHTML = "&#x25BE;"; // Down arrow symbol (unfolded)
-                    
-                    // Check if an input area inside was left open, adjust scaling heights instantly
+                    foldBtn.innerHTML = "&#x25BE;"; 
                     const openTextArea = body.querySelector("textarea");
                     if (openTextArea) autoResize(openTextArea);
                 } else {
                     body.style.display = "none";
-                    foldBtn.innerHTML = "&#x25B8;"; // Right arrow symbol (folded)
+                    foldBtn.innerHTML = "&#x25B8;"; 
                 }
             };
         }
@@ -376,6 +382,7 @@ function openModal(type) {
     
     const avatarUpload = document.getElementById("avatarUploadContainer");
     const inputGroupZone = document.getElementById("new-item-inputs");
+    const saveBtn = document.getElementById("save");
     document.getElementById("newAvatarInput").value = "";
     
     if (type === "character") {
@@ -383,14 +390,17 @@ function openModal(type) {
         document.getElementById("textLabel").innerText = "Instructions";
         avatarUpload.style.display = "flex";
         inputGroupZone.style.display = "flex";
+        saveBtn.style.display = "inline-block";
     } else if (type === "world") {
         document.getElementById("modalTitle").innerText = "World Scenarios";
         document.getElementById("textLabel").innerText = "Context Description";
         avatarUpload.style.display = "none";
         inputGroupZone.style.display = "flex";
+        saveBtn.style.display = "inline-block";
     } else {
         document.getElementById("modalTitle").innerText = "Extra Information Layer";
         inputGroupZone.style.display = "none";
+        saveBtn.style.display = "none";
     }
     renderItemList();
 }
@@ -568,7 +578,9 @@ socket.on("load chat", (chat) => {
     if (chat.messages) {
         chat.messages.forEach(m => appendMessage(m.role, m.content, m.displayName));
     }
-    if (document.getElementById("modal").style.display === "flex") renderItemList();
+    if (document.getElementById("modal").style.display === "flex") {
+        renderItemList();
+    }
     chatDiv.scrollTop = chatDiv.scrollHeight;
 });
 
