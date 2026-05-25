@@ -99,6 +99,10 @@ body {
 .item-checkbox { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
 .btn-del { background: #cc241d; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; }
 
+/* ADDED: Fold/Unfold Toggle Button */
+.fold-toggle-btn { background: transparent; border: none; color: var(--text-secondary); cursor: pointer; font-size: 12px; padding: 4px; display: flex; align-items: center; justify-content: center; transition: color 0.2s; }
+.fold-toggle-btn:hover { color: white; }
+
 /* CHARACTER AVATAR THUMBNAILS */
 .item-avatar { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; background: #444; border: 1px solid var(--border-color); flex-shrink: 0; cursor: pointer; transition: transform 0.2s ease; }
 .item-avatar:hover { transform: scale(1.08); }
@@ -205,7 +209,6 @@ function autoResize(el) {
 
 function closeModal() { document.getElementById("modal").style.display = "none"; }
 
-/* ADDED: Helper to instantly dismiss the mobile side drawer panel */
 function closeMobileSidebar() {
     document.getElementById("sidebar").classList.remove("open");
     document.getElementById("sidebarOverlay").classList.remove("open");
@@ -278,6 +281,15 @@ function renderItemList() {
             }
         };
 
+        /* ADDED: Folding dropdown controller arrow for Characters view layout */
+        let foldBtn = null;
+        if (type === "character") {
+            foldBtn = document.createElement("button");
+            foldBtn.className = "fold-toggle-btn";
+            foldBtn.innerHTML = "&#x25B8;"; // Right arrow symbol by default (folded)
+            header.appendChild(foldBtn);
+        }
+
         if (type === "character") {
             if (item.avatar) {
                 const img = document.createElement("img");
@@ -318,6 +330,27 @@ function renderItemList() {
         const body = document.createElement("div");
         body.className = "item-body";
         body.innerText = item.text || "(Click to add text)";
+        
+        /* UPDATED: Add conditional visibility toggle behaviors for the folding framework */
+        if (type === "character") {
+            body.style.display = "none"; // Hide instructions text field block by default
+            
+            foldBtn.onclick = (e) => {
+                e.stopPropagation();
+                if (body.style.display === "none") {
+                    body.style.display = "block";
+                    foldBtn.innerHTML = "&#x25BE;"; // Down arrow symbol (unfolded)
+                    
+                    // Check if an input area inside was left open, adjust scaling heights instantly
+                    const openTextArea = body.querySelector("textarea");
+                    if (openTextArea) autoResize(openTextArea);
+                } else {
+                    body.style.display = "none";
+                    foldBtn.innerHTML = "&#x25B8;"; // Right arrow symbol (folded)
+                }
+            };
+        }
+
         body.onclick = () => {
             const edit = document.createElement("textarea");
             edit.className = "auto-edit-field";
@@ -459,7 +492,6 @@ socket.on("chats list", (chats) => {
         
         const lnk = document.createElement("div"); lnk.className = "chat-item-link"; lnk.innerText = item.name;
         
-        /* UPDATED: Closes the sidebar smoothly on selection action triggers */
         row.onclick = () => {
             socket.emit("open chat", item.id);
             closeMobileSidebar();
@@ -554,7 +586,6 @@ socket.on("stream chunk", (data) => {
 
 socket.on("stream complete", () => { activeStreamNode = null; });
 
-/* UPDATED: Added side menu closing effect to the new chat generator trigger */
 document.getElementById("newChat").onclick = () => {
     socket.emit("new chat");
     closeMobileSidebar();
