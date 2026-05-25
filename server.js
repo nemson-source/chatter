@@ -8,7 +8,6 @@ const OpenAI = require("openai");
 const app = express();
 const server = http.createServer(app);
 
-// Increase payloads limit to handle base64 images seamlessly
 const io = new Server(server, {
     maxHttpBufferSize: 1e7 // 10MB limit
 });
@@ -43,7 +42,7 @@ function loadChat(userId, chatId) {
         if (!data.characters) data.characters = [];
         if (!data.messages) data.messages = [];
         if (!data.name) data.name = "";
-        if (!data.extraInfo) data.extraInfo = ""; // Fallback context
+        if (!data.extraInfo) data.extraInfo = "";
         return data;
     } catch (e) {
         return { name: "", characters: [], scenarios: [], extraInfo: "", messages: [] };
