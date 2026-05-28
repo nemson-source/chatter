@@ -80,7 +80,6 @@ body {
 .input-container-wrapper { display: flex; width: 100%; max-width: 720px; margin: 0 auto; gap: 8px; align-items: flex-end; }
 #form { flex: 1; position: relative; background: var(--bg-message-user); border-radius: 24px; display: flex; padding: 4px 8px; align-items: flex-end; }
 
-/* Fixed white bar by changing overflow-y to hidden */
 #message { flex: 1; background: transparent; border: none; outline: none; color: var(--text-primary); padding: 12px; font-size: 16px; font-family: inherit; resize: none; max-height: 200px; height: 44px; overflow-y: hidden; }
 
 #form button { background: var(--text-primary); border: none; width: 36px; height: 36px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-bottom: 4px; }
@@ -203,6 +202,7 @@ function getSyncKey() {
 
 const socket = io({ auth: { userId: getSyncKey() } });
 let currentChat = null, chatData = null, activeStreamNode = null, activeStreamText = "";
+let selectedChatsTrack = new Set(); // Multi-selection reference tracking structure
 
 const chatDiv = document.getElementById("chat");
 marked.setOptions({ breaks: true, gfm: true });
@@ -217,7 +217,7 @@ mainMessageInput.addEventListener("input", function() {
     this.style.height = '44px';
     if(this.scrollHeight > 44) {
         this.style.height = this.scrollHeight + 'px';
-        this.style.overflowY = this.scrollHeight > 200 ? 'auto' : 'hidden'; // fallback switch only if it grows massive
+        this.style.overflowY = this.scrollHeight > 200 ? 'auto' : 'hidden';
     } else {
         this.style.overflowY = 'hidden';
     }
@@ -245,6 +245,27 @@ function openLightbox(src) {
 }
 document.getElementById("lightbox").onclick = function() { this.classList.remove("show"); };
 document.getElementById("lightboxImg").onclick = function(e) { e.stopPropagation(); };
+
+/**
+ * Mobile Hardware Accelerator: Compresses big smartphone cameras / photos
+ * instantly down into lightweight, optimized 80x80 thumbnail string format.
+ */
+function compressAvatarFile(file, callback) {
+    const reader = new FileReader();
+    reader.onload = function(event) {
+        const img = new Image();
+        img.onload = function() {
+            const canvas = document.createElement("canvas");
+            canvas.width = 80;
+            canvas.height = 80;
+            const ctx = canvas.getContext("2d");
+            ctx.drawImage(img, 0, 0, 80, 80);
+            callback(canvas.toDataURL("image/jpeg", 0.7));
+        };
+        img.src = event.target.result;
+    };
+    reader.readAsDataURL(file);
+}
 
 function renderItemList() {
     if (document.activeElement && document.activeElement.id === "extraInfoTextArea") {
@@ -275,13 +296,8 @@ function renderItemList() {
         txt.value = chatData.extraInfo || "";
         txt.placeholder = "Enter facts, rules, constraints or lore updates here for the AI to instantly remember...";
         
-        txt.oninput = () => {
-            chatData.extraInfo = txt.value;
-        };
-
-        txt.onblur = () => {
-            socket.emit("update extra info", { chatId: currentChat, extraInfo: txt.value });
-        };
+        txt.oninput = () => { chatData.extraInfo = txt.value; };
+        txt.onblur = () => { socket.emit("update extra info", { chatId: currentChat, extraInfo: txt.value }); };
 
         infoWrapper.append(label, txt);
         zone.appendChild(infoWrapper);
@@ -312,6 +328,8 @@ function renderItemList() {
             }
         };
 
+        header.appendChild(check);
+
         let foldBtn = null;
         if (type === "character") {
             foldBtn = document.createElement("button");
@@ -337,301 +355,312 @@ function renderItemList() {
 
         const nameInput = document.createElement("input");
         nameInput.className = "item-name";
-        nameInput.value = item.name;
-        nameInput.onblur = () => {
-            if (nameInput.value !== item.name) {
-                item.name = nameInput.value;
-                socket.emit(type === "character" ? "update characters" : "update world", 
-                    type === "character" ? { chatId: currentChat, characters: items } : { chatId: currentChat, scenarios: items });
+        nameInput.value = item.name || "";
+        nameInput.placeholder = type === "character" ? "Character Name" : "Scenario Title";
+        nameInput.onchange = () => {
+            item.name = nameInput.value;
+            if (type === "character") {
+                socket.emit("update characters", { chatId: currentChat, characters: items });
+            } else {
+                socket.emit("update world", { chatId: currentChat, scenarios: items });
             }
         };
+        header.appendChild(nameInput);
 
-        const del = document.createElement("button");
-        del.className = "btn-del"; del.innerText = "Delete";
-        del.onclick = () => {
+        const delBtn = document.createElement("button");
+        delBtn.className = "btn-del";
+        delBtn.innerText = "Delete";
+        delBtn.onclick = () => {
             items.splice(idx, 1);
-            socket.emit(type === "character" ? "update characters" : "update world", 
-                type === "character" ? { chatId: currentChat, characters: items } : { chatId: currentChat, scenarios: items });
+            if (type === "character") {
+                socket.emit("update characters", { chatId: currentChat, characters: items });
+            } else {
+                socket.emit("update world", { chatId: currentChat, scenarios: items });
+            }
+            renderItemList();
         };
-
-        header.append(check, nameInput, del);
+        header.appendChild(delBtn);
         card.appendChild(header);
 
-        const body = document.createElement("div");
-        body.className = "item-body";
-        body.innerText = item.text || "(Click to add text)";
+        const bodyArea = document.createElement("div");
+        bodyArea.className = "item-body";
+        bodyArea.innerText = item.text || (type === "character" ? "Click to add instructions..." : "Click to add world setting description...");
         
         if (type === "character") {
-            body.style.display = "none"; 
-            
+            bodyArea.style.display = "none";
             foldBtn.onclick = (e) => {
                 e.stopPropagation();
-                if (body.style.display === "none") {
-                    body.style.display = "block";
-                    foldBtn.innerHTML = "&#x25BE;"; 
-                    const openTextArea = body.querySelector("textarea");
-                    if (openTextArea) autoResize(openTextArea);
+                if (bodyArea.style.display === "none") {
+                    bodyArea.style.display = "block";
+                    foldBtn.innerHTML = "&#x25BE;";
                 } else {
-                    body.style.display = "none";
-                    foldBtn.innerHTML = "&#x25B8;"; 
+                    bodyArea.style.display = "none";
+                    foldBtn.innerHTML = "&#x25B8;";
                 }
             };
         }
 
-        body.onclick = () => {
+        bodyArea.onclick = () => {
             const edit = document.createElement("textarea");
             edit.className = "auto-edit-field";
-            edit.value = item.text;
-            body.replaceWith(edit);
-            edit.focus();
+            edit.value = item.text || "";
+            card.replaceChild(edit, bodyArea);
             autoResize(edit);
+            edit.focus();
+            
             edit.oninput = () => autoResize(edit);
             edit.onblur = () => {
                 item.text = edit.value;
-                socket.emit(type === "character" ? "update characters" : "update world", 
-                    type === "character" ? { chatId: currentChat, characters: items } : { chatId: currentChat, scenarios: items });
+                if (type === "character") {
+                    socket.emit("update characters", { chatId: currentChat, characters: items });
+                } else {
+                    socket.emit("update world", { chatId: currentChat, scenarios: items });
+                }
+                renderItemList();
             };
         };
-        card.appendChild(body);
+
+        card.appendChild(bodyArea);
         zone.appendChild(card);
     });
 }
 
-function openModal(type) {
-    const m = document.getElementById("modal");
-    m.style.display = "flex"; m.dataset.type = type;
+function showModal(title, type) {
+    const modal = document.getElementById("modal");
+    modal.dataset.type = type;
+    document.getElementById("modalTitle").innerText = title;
     
-    const avatarUpload = document.getElementById("avatarUploadContainer");
-    const inputGroupZone = document.getElementById("new-item-inputs");
-    const saveBtn = document.getElementById("save");
+    document.getElementById("newNameInput").value = "";
+    document.getElementById("newTextInput").value = "";
     document.getElementById("newAvatarInput").value = "";
     
-    if (type === "character") {
-        document.getElementById("modalTitle").innerText = "Characters";
-        document.getElementById("textLabel").innerText = "Instructions";
-        avatarUpload.style.display = "flex";
-        inputGroupZone.style.display = "flex";
-        saveBtn.style.display = "inline-block";
-    } else if (type === "world") {
-        document.getElementById("modalTitle").innerText = "World Scenarios";
-        document.getElementById("textLabel").innerText = "Context Description";
-        avatarUpload.style.display = "none";
-        inputGroupZone.style.display = "flex";
-        saveBtn.style.display = "inline-block";
-    } else {
-        document.getElementById("modalTitle").innerText = "Extra Information Layer";
-        inputGroupZone.style.display = "none";
-        saveBtn.style.display = "none";
-    }
+    const avatarRow = document.getElementById("avatarUploadContainer");
+    avatarRow.style.display = type === "character" ? "flex" : "none";
+    
+    document.getElementById("new-item-inputs").style.display = type === "extrainfo" ? "none" : "flex";
+    
     renderItemList();
+    modal.style.display = "flex";
 }
 
-document.getElementById("charBtn").onclick = () => openModal("character");
-document.getElementById("worldBtn").onclick = () => openModal("world");
-document.getElementById("extraInfoBtn").onclick = () => openModal("extrainfo");
+document.getElementById("charBtn").onclick = () => showModal("Manage System Characters", "character");
+document.getElementById("worldBtn").onclick = () => showModal("Manage Narrative Scenarios", "world");
+document.getElementById("extraInfoBtn").onclick = () => showModal("Global Fact Injection", "extrainfo");
 
 document.getElementById("save").onclick = () => {
-    if (!chatData || !currentChat) return;
     const type = document.getElementById("modal").dataset.type;
     if (type === "extrainfo") return;
 
     const name = document.getElementById("newNameInput").value.trim();
     const text = document.getElementById("newTextInput").value.trim();
-    if (!name || !text) return;
-    
+    if (!name) return;
+
+    const items = type === "character" ? (chatData.characters || []) : (chatData.scenarios || []);
+
     if (type === "character") {
         const fileInput = document.getElementById("newAvatarInput");
-        const file = fileInput.files[0];
-        if (file) {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                const list = [...(chatData.characters || []), { name, text, enabled: true, avatar: reader.result }];
-                socket.emit("update characters", { chatId: currentChat, characters: list });
-                clearFormInputs();
-            };
-            reader.readAsDataURL(file);
+        if (fileInput.files && fileInput.files[0]) {
+            compressAvatarFile(fileInput.files[0], (compressedBase64) => {
+                items.push({ name, text, enabled: true, avatar: compressedBase64 });
+                socket.emit("update characters", { chatId: currentChat, characters: items });
+                document.getElementById("newNameInput").value = "";
+                document.getElementById("newTextInput").value = "";
+                document.getElementById("newAvatarInput").value = "";
+                renderItemList();
+            });
         } else {
-            const list = [...(chatData.characters || []), { name, text, enabled: true, avatar: null }];
-            socket.emit("update characters", { chatId: currentChat, characters: list });
-            clearFormInputs();
+            items.push({ name, text, enabled: true, avatar: null });
+            socket.emit("update characters", { chatId: currentChat, characters: items });
+            document.getElementById("newNameInput").value = "";
+            document.getElementById("newTextInput").value = "";
+            renderItemList();
         }
     } else {
-        const list = (chatData.scenarios || []).map(s => ({...s, active: false}));
-        list.push({ name, text, active: true });
-        socket.emit("update world", { chatId: currentChat, scenarios: list });
-        clearFormInputs();
+        const wasEmpty = items.length === 0;
+        items.push({ name, text, active: wasEmpty });
+        socket.emit("update world", { chatId: currentChat, scenarios: items });
+        document.getElementById("newNameInput").value = "";
+        document.getElementById("newTextInput").value = "";
+        renderItemList();
     }
 };
 
-function clearFormInputs() {
-    document.getElementById("newNameInput").value = ""; 
-    document.getElementById("newTextInput").value = "";
-    document.getElementById("newAvatarInput").value = "";
-}
+// CHAT RENDERING ENGINE
+function appendMessage(msg) {
+    const isUser = msg.role === "user";
+    const wrapper = document.createElement("div");
+    wrapper.className = `message-wrapper ${isUser ? 'user-wrapper' : 'ai-wrapper'}`;
 
-function appendMessage(role, content, name) {
-    const wrap = document.createElement("div");
-    wrap.className = `message-wrapper ${role}-wrapper`;
-    const cont = document.createElement("div");
-    cont.className = "message-container";
-    const head = document.createElement("div");
-    head.className = "msg-header"; head.innerText = role === "user" ? "You" : (name || "Assistant");
+    const container = document.createElement("div");
+    container.className = "message-container";
+
+    const header = document.createElement("div");
+    header.className = "msg-header";
+    header.innerText = isUser ? "You" : (msg.displayName || "Assistant");
+
     const body = document.createElement("div");
-    body.className = "msg-body"; body.innerHTML = marked.parse(content);
-    cont.append(head, body); wrap.append(cont);
-    chatDiv.append(wrap);
+    body.className = "msg-body";
+    body.innerHTML = isUser ? msg.content : marked.parse(msg.content);
+
+    container.append(header, body);
+    wrapper.appendChild(container);
+    chatDiv.appendChild(wrapper);
     chatDiv.scrollTop = chatDiv.scrollHeight;
     return body;
 }
 
-document.getElementById("form").onsubmit = (e) => {
-    e.preventDefault();
-    const msgInput = document.getElementById("message");
-    const msg = msgInput.value.trim();
-    if (!msg || !currentChat) return;
-    appendMessage("user", msg);
-    socket.emit("chat message", { chatId: currentChat, message: msg });
-    msgInput.value = "";
-    msgInput.style.height = "44px";
-    msgInput.style.overflowY = 'hidden';
-};
+function renderChat() {
+    chatDiv.innerHTML = "";
+    if (!chatData || !chatData.messages) return;
+    chatData.messages.forEach(appendMessage);
+    chatDiv.scrollTop = chatDiv.scrollHeight;
+}
 
-function evaluateCheckboxState() {
-    const checkedBoxes = document.querySelectorAll(".delete-checkbox:checked");
-    const actionContainer = document.getElementById("selectionActionBar");
-    const renameBtn = document.getElementById("massRenameBtn");
-    
-    if (checkedBoxes.length === 0) {
-        actionContainer.style.display = "none";
+function updateActionBarVisibility() {
+    const bar = document.getElementById("selectionActionBar");
+    const newChatBtn = document.getElementById("newChat");
+    if (selectedChatsTrack.size > 0) {
+        bar.style.display = "flex";
+        newChatBtn.style.display = "none";
     } else {
-        actionContainer.style.display = "flex";
-        renameBtn.style.display = (checkedBoxes.length === 1) ? "flex" : "none";
+        bar.style.display = "none";
+        newChatBtn.style.display = "flex";
     }
 }
 
+// SOCKET EVENTS
 socket.on("chats list", (chats) => {
-    const list = document.getElementById("chatList"); list.innerHTML = "";
-    chats.forEach(item => {
-        const row = document.createElement("div"); row.className = "chat-item-wrapper";
+    const list = document.getElementById("chatList");
+    list.innerHTML = "";
+    chats.forEach(c => {
+        const wrap = document.createElement("div");
+        wrap.className = `chat-item-wrapper ${c.id === currentChat ? 'active' : ''}`;
         
-        const isCurrent = (currentChat === item.id);
-        if (isCurrent) row.classList.add("active");
-        
-        const chk = document.createElement("input"); chk.type = "checkbox"; chk.className = "delete-checkbox"; chk.dataset.id = item.id;
-        chk.dataset.name = item.name;
-        
-        chk.onclick = (e) => { e.stopPropagation(); };
-        chk.onchange = evaluateCheckboxState;
-        
-        const lnk = document.createElement("div"); lnk.className = "chat-item-link"; lnk.innerText = item.name;
-        
-        row.onclick = () => {
-            socket.emit("open chat", item.id);
+        // Multi-selection checkbox system container integration
+        const check = document.createElement("input");
+        check.type = "checkbox";
+        check.className = "delete-checkbox";
+        check.checked = selectedChatsTrack.has(c.id);
+        check.onclick = (e) => e.stopPropagation(); // Avoid switching chat accidentally when checking boxes
+        check.onchange = () => {
+            if (check.checked) {
+                selectedChatsTrack.add(c.id);
+            } else {
+                selectedChatsTrack.delete(c.id);
+            }
+            updateActionBarVisibility();
+        };
+        wrap.appendChild(check);
+
+        const link = document.createElement("div");
+        link.className = "chat-item-link";
+        link.innerText = c.name || "Untitled Chat";
+        link.onclick = () => {
+            currentChat = c.id;
+            socket.emit("open chat", c.id);
             closeMobileSidebar();
         };
-        
-        row.ondblclick = (e) => {
-            e.stopPropagation();
-            const n = prompt("Rename chat:", item.name);
-            if (n) socket.emit("update world", { chatId: item.id, customName: n });
-        };
-        
-        row.append(chk, lnk);
+        wrap.appendChild(link);
 
-        if (isCurrent) {
+        // Check and display the live active chat marker indicator badge
+        if (c.id === currentChat) {
             const badge = document.createElement("span");
             badge.className = "active-badge";
-            badge.innerText = "Active";
-            row.appendChild(badge);
+            badge.innerText = "Live";
+            wrap.appendChild(badge);
         }
-
-        list.append(row);
+        list.appendChild(wrap);
     });
-    evaluateCheckboxState();
+    updateActionBarVisibility();
 });
 
-document.getElementById("massDeleteBtn").onclick = () => {
-    const checkedBoxes = document.querySelectorAll(".delete-checkbox:checked");
-    if (checkedBoxes.length === 0) return;
-    
-    if (confirm(`Are you sure you want to delete the ${checkedBoxes.length} selected chat(s)?`)) {
-        const idsToDelete = Array.from(checkedBoxes).map(cb => cb.dataset.id);
-        socket.emit("delete selected chats", idsToDelete);
-    }
-};
+socket.on("active chat lock", (id) => { currentChat = id; });
 
-document.getElementById("massRenameBtn").onclick = () => {
-    const checkedBoxes = document.querySelectorAll(".delete-checkbox:checked");
-    if (checkedBoxes.length !== 1) return;
-    
-    const targetCheckbox = checkedBoxes[0];
-    const targetId = targetCheckbox.dataset.id;
-    const oldName = targetCheckbox.dataset.name;
-    
-    const newName = prompt("Rename selected chat:", oldName);
-    if (newName && newName.trim() !== "") {
-        socket.emit("update world", { chatId: targetId, customName: newName.trim() });
-    }
-};
-
-socket.on("active chat lock", (chatId) => {
-    currentChat = chatId;
-    const elements = document.querySelectorAll(".chat-item-wrapper");
-    elements.forEach(el => {
-        const cb = el.querySelector(".delete-checkbox");
-        if (cb && cb.dataset.id === chatId) {
-            el.classList.add("active");
-            if (!el.querySelector(".active-badge")) {
-                const badge = document.createElement("span");
-                badge.className = "active-badge";
-                badge.innerText = "Active";
-                el.appendChild(badge);
-            }
-        } else {
-            el.classList.remove("active");
-            const existingBadge = el.querySelector(".active-badge");
-            if (existingBadge) existingBadge.remove();
-        }
-    });
-});
-
-socket.on("load chat", (chat) => {
-    currentChat = chat.chatId; chatData = chat;
-    chatDiv.innerHTML = "";
-    if (chat.messages) {
-        chat.messages.forEach(m => appendMessage(m.role, m.content, m.displayName));
-    }
-    if (document.getElementById("modal").style.display === "flex") {
-        renderItemList();
-    }
-    chatDiv.scrollTop = chatDiv.scrollHeight;
+socket.on("load chat", (data) => {
+    if (data.chatId && data.chatId !== currentChat) return;
+    chatData = data;
+    renderChat();
+    renderItemList();
 });
 
 socket.on("stream chunk", (data) => {
     if (data.chatId !== currentChat) return;
-    const isAtBottom = chatDiv.scrollHeight - chatDiv.clientHeight <= chatDiv.scrollTop + 60;
-    if (!activeStreamNode) { 
-        activeStreamText = ""; 
-        activeStreamNode = appendMessage("ai", "", data.identityLabel); 
+    if (!activeStreamNode) {
+        const wrapper = document.createElement("div");
+        wrapper.className = "message-wrapper ai-wrapper";
+        const container = document.createElement("div");
+        container.className = "message-container";
+        const header = document.createElement("div");
+        header.className = "msg-header";
+        header.innerText = data.identityLabel || "Assistant";
+        activeStreamNode = document.createElement("div");
+        activeStreamNode.className = "msg-body";
+        
+        container.append(header, activeStreamNode);
+        wrapper.appendChild(container);
+        chatDiv.appendChild(wrapper);
     }
     activeStreamText += data.textChunk;
     activeStreamNode.innerHTML = marked.parse(activeStreamText);
-    if (isAtBottom) chatDiv.scrollTop = chatDiv.scrollHeight;
+    chatDiv.scrollTop = chatDiv.scrollHeight;
 });
 
-socket.on("stream complete", () => { activeStreamNode = null; });
+socket.on("stream complete", (data) => {
+    if (data.chatId !== currentChat) return;
+    activeStreamNode = null;
+    activeStreamText = "";
+});
 
-document.getElementById("newChat").onclick = () => {
-    socket.emit("new chat");
-    closeMobileSidebar();
+// MASS ACTIONS INTERFACES
+document.getElementById("massDeleteBtn").onclick = () => {
+    if (selectedChatsTrack.size === 0) return;
+    if (confirm(`Are you sure you want to delete the ${selectedChatsTrack.size} selected chats?`)) {
+        const targetIds = Array.from(selectedChatsTrack);
+        socket.emit("delete selected chats", targetIds);
+        selectedChatsTrack.clear();
+        updateActionBarVisibility();
+    }
 };
 
-document.getElementById("sidebarOverlay").onclick = () => closeMobileSidebar();
-document.getElementById("logoutBtn").onclick = () => { localStorage.removeItem("sync_key"); window.location.reload(); };
-document.getElementById("clearLogsBtn").onclick = () => { if(confirm("Clear logs?")) socket.emit("update characters", { chatId: currentChat, characters: chatData.characters, clearLogTrack: true }); };
+document.getElementById("massRenameBtn").onclick = () => {
+    if (selectedChatsTrack.size === 0) return;
+    const title = prompt(`Enter a new title for the ${selectedChatsTrack.size} selected chats:`);
+    if (title && title.trim()) {
+        const targetIds = Array.from(selectedChatsTrack);
+        socket.emit("mass rename chats", { chatIds: targetIds, newName: title.trim() });
+        selectedChatsTrack.clear();
+        updateActionBarVisibility();
+    }
+};
+
+document.getElementById("form").onsubmit = (e) => {
+    e.preventDefault();
+    const txt = mainMessageInput.value.trim();
+    if (!txt || !currentChat) return;
+    
+    appendMessage({ role: "user", content: txt });
+    socket.emit("chat message", { chatId: currentChat, message: txt });
+    
+    mainMessageInput.value = "";
+    mainMessageInput.style.height = "44px";
+};
+
+document.getElementById("newChat").onclick = () => socket.emit("new chat");
+document.getElementById("clearLogsBtn").onclick = () => {
+    if (confirm("Clear all logs in this session?")) {
+        socket.emit("update characters", { chatId: currentChat, characters: chatData.characters, clearLogTrack: true });
+    }
+};
+
+// UI Toggles
 document.getElementById("menuToggle").onclick = () => {
-    document.getElementById("sidebar").classList.toggle("open");
-    document.getElementById("sidebarOverlay").classList.toggle("open");
+    document.getElementById("sidebar").classList.add("open");
+    document.getElementById("sidebarOverlay").classList.add("open");
+};
+document.getElementById("sidebarOverlay").onclick = closeMobileSidebar;
+document.getElementById("logoutBtn").onclick = () => {
+    localStorage.removeItem("sync_key");
+    window.location.reload();
 };
 </script>
 </body>
