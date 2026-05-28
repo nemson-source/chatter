@@ -69,12 +69,19 @@ body {
 .msg-header { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
 .user-wrapper { justify-content: flex-end; }
 .user-wrapper .message-container { display: flex; flex-direction: column; align-items: flex-end; }
-.user-wrapper .msg-body { background: var(--bg-message-user); padding: 10px 16px; border-radius: 18px; max-width: 85%; }
-.ai-wrapper .msg-header { color: var(--accent); }
-.msg-body { font-size: 15px; word-break: break-word; }
-.msg-body p { margin: 0 0 8px 0; }
+
+/* REIFIED FORMATTING ENGINE BASE RULES FOR BOTH USER & AI */
+.msg-body { font-size: 15px; word-break: break-word; line-height: 1.5; }
+.msg-body p { margin: 0 0 10px 0; }
 .msg-body p:last-child { margin-bottom: 0; }
-.msg-body pre { background: #0d0d0d; padding: 12px; border-radius: 8px; overflow-x: auto; }
+.msg-body pre { background: #0d0d0d; padding: 12px; border-radius: 8px; overflow-x: auto; margin: 8px 0; }
+.msg-body code { font-family: monospace; background: rgba(0,0,0,0.3); padding: 2px 5px; border-radius: 4px; font-size: 14px; }
+.msg-body pre code { background: transparent; padding: 0; border-radius: 0; font-size: 13px; }
+.msg-body ul, .msg-body ol { margin: 0 0 10px 0; padding-left: 20px; }
+
+/* INDEPENDENT SKIN COLORING RULES */
+.user-wrapper .msg-body { background: var(--bg-message-user); padding: 12px 16px; border-radius: 18px; max-width: 85%; }
+.ai-wrapper .msg-header { color: var(--accent); }
 
 #input-area { padding: 12px 16px; background: var(--bg-main); flex-shrink: 0; z-index: 10; }
 .input-container-wrapper { display: flex; width: 100%; max-width: 720px; margin: 0 auto; gap: 8px; align-items: flex-end; }
@@ -202,7 +209,7 @@ function getSyncKey() {
 
 const socket = io({ auth: { userId: getSyncKey() } });
 let currentChat = null, chatData = null, activeStreamNode = null, activeStreamText = "";
-let selectedChatsTrack = new Set(); // Multi-selection reference tracking structure
+let selectedChatsTrack = new Set();
 
 const chatDiv = document.getElementById("chat");
 marked.setOptions({ breaks: true, gfm: true });
@@ -246,10 +253,6 @@ function openLightbox(src) {
 document.getElementById("lightbox").onclick = function() { this.classList.remove("show"); };
 document.getElementById("lightboxImg").onclick = function(e) { e.stopPropagation(); };
 
-/**
- * Mobile Hardware Accelerator: Compresses big smartphone cameras / photos
- * instantly down into lightweight, optimized 80x80 thumbnail string format.
- */
 function compressAvatarFile(file, callback) {
     const reader = new FileReader();
     reader.onload = function(event) {
@@ -485,7 +488,7 @@ document.getElementById("save").onclick = () => {
     }
 };
 
-// CHAT RENDERING ENGINE
+// BOTH CHAT TILES RENDER VIA THE MARKED MD PARSER INSTANCE
 function appendMessage(msg) {
     const isUser = msg.role === "user";
     const wrapper = document.createElement("div");
@@ -500,7 +503,9 @@ function appendMessage(msg) {
 
     const body = document.createElement("div");
     body.className = "msg-body";
-    body.innerHTML = isUser ? msg.content : marked.parse(msg.content);
+    
+    // Marked parsing pipeline applies universally to user formatting blueprints as well
+    body.innerHTML = marked.parse(msg.content);
 
     container.append(header, body);
     wrapper.appendChild(container);
@@ -536,12 +541,11 @@ socket.on("chats list", (chats) => {
         const wrap = document.createElement("div");
         wrap.className = `chat-item-wrapper ${c.id === currentChat ? 'active' : ''}`;
         
-        // Multi-selection checkbox system container integration
         const check = document.createElement("input");
         check.type = "checkbox";
         check.className = "delete-checkbox";
         check.checked = selectedChatsTrack.has(c.id);
-        check.onclick = (e) => e.stopPropagation(); // Avoid switching chat accidentally when checking boxes
+        check.onclick = (e) => e.stopPropagation(); 
         check.onchange = () => {
             if (check.checked) {
                 selectedChatsTrack.add(c.id);
@@ -562,7 +566,6 @@ socket.on("chats list", (chats) => {
         };
         wrap.appendChild(link);
 
-        // Check and display the live active chat marker indicator badge
         if (c.id === currentChat) {
             const badge = document.createElement("span");
             badge.className = "active-badge";
