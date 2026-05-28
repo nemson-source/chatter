@@ -2,9 +2,10 @@ const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 const fs = require("fs");
+const fsPromises = require("fs").promises;
 const path = require("path");
 const OpenAI = require("openai");
-const crypto = require("crypto"); // Used to generate unique, secure IDs
+const crypto = require("crypto");
 
 const app = express();
 const server = http.createServer(app);
@@ -24,12 +25,14 @@ app.use(express.static("public"));
 const CHATS_DIR = "./chat-history/web";
 const CHARACTERS_DIR = "./characters";
 
-// Ensure global directory for standalone character files exists
+// Sync check on startup only
 if (!fs.existsSync(CHARACTERS_DIR)) {
     fs.mkdirSync(CHARACTERS_DIR, { recursive: true });
 }
 
 const userActiveChatState = {};
+// Global in-memory cache to prevent repetitive, sluggish disk reads for characters
+const characterCache = new Map();
 
 function userDir(userId) {
     const safeId = String(userId || "default_user").replace(/[^a-zA-Z0-9_\-]/g, "");
@@ -42,44 +45,90 @@ function chatPath(userId, chatId) {
 }
 
 /**
- * Global Character Storage Layer Helpers
+ * Optimized Character Storage with In-Memory Caching
  */
 function getCharacterFilePath(charId) {
     return path.join(CHARACTERS_DIR, `${charId}.json`);
 }
 
-function saveGlobalCharacter(char) {
+async function saveGlobalCharacter(char) {
     let id = char.id;
     if (!id) {
         id = `char-${crypto.randomUUID()}`;
         char.id = id;
     }
-    fs.writeFileSync(getCharacterFilePath(id), JSON.stringify(char, null, 2));
+    // Update cache instantly so reads are immediate
+    characterCache.set(id, char);
+    
+    // Async background write to disk
+    fsPromises.writeFile(getCharacterFilePath(id), JSON.stringify(char, null, 2), "utf8")
+        .catch(err => console.error(`Failed to background write character ${id}:`, err));
+        
     return char;
 }
 
-function loadGlobalCharacter(charId) {
+function loadGlobalCharacterSync(charId) {
+    if (characterCache.has(charId)) return characterCache.get(charId);
+    
     const file = getCharacterFilePath(charId);
     if (!fs.existsSync(file)) return null;
     try {
-        return JSON.parse(fs.readFileSync(file, "utf8"));
+        const data = JSON.parse(fs.readFileSync(file, "utf8"));
+        characterCache.set(charId, data);
+        return data;
     } catch (e) {
         return null;
     }
 }
 
 /**
- * Hydrates a chat history metadata payload by fetching full records 
- * for any character reference link ID found inside it.
+ * Hydrates chat records using non-blocking asynchronous file operations
  */
-function loadChatAndHydrate(userId, chatId) {
+async function loadChatAndHydrateAsync(userId, chatId) {
+    const file = chatPath(userId, chatId);
+    let chat = { name: "", characters: [], scenarios: [], extraInfo: "", messages: [] };
+    
+    try {
+        const raw = await fsPromises.readFile(file, "utf8");
+        chat = JSON.parse(raw);
+    } catch (e) { /* File missing or corrupt, uses default empty struct */ }
+
+    if (!chat.scenarios) chat.scenarios = [];
+    if (!chat.characters) chat.characters = [];
+    if (!chat.messages) chat.messages = [];
+    if (!chat.name) chat.name = "";
+    if (!chat.extraInfo) chat.extraInfo = "";
+
+    const fullyLoadedCharacters = [];
+    for (const ref of chat.characters) {
+        if (!ref || !ref.id) continue;
+        
+        // Fast cache read
+        const fullProfile = loadGlobalCharacterSync(ref.id);
+        if (fullProfile) {
+            fullyLoadedCharacters.push({
+                id: ref.id,
+                name: fullProfile.name,
+                text: fullProfile.text,
+                avatar: fullProfile.avatar,
+                enabled: ref.enabled !== false
+            });
+        }
+    }
+
+    chat.characters = fullyLoadedCharacters;
+    return chat;
+}
+
+// Synchronous version reserved strictly for rapid array mapping loops where async handlers slow down execution
+function loadChatAndHydrateSync(userId, chatId) {
     const file = chatPath(userId, chatId);
     let chat = { name: "", characters: [], scenarios: [], extraInfo: "", messages: [] };
     
     if (fs.existsSync(file)) {
         try {
             chat = JSON.parse(fs.readFileSync(file, "utf8"));
-        } catch (e) { /* Fallback to default struct */ }
+        } catch (e) {}
     }
 
     if (!chat.scenarios) chat.scenarios = [];
@@ -88,11 +137,10 @@ function loadChatAndHydrate(userId, chatId) {
     if (!chat.name) chat.name = "";
     if (!chat.extraInfo) chat.extraInfo = "";
 
-    // Convert stored index configurations (ID + checkbox status) into complete objects for the UI
     const fullyLoadedCharacters = [];
     chat.characters.forEach(ref => {
         if (!ref || !ref.id) return;
-        const fullProfile = loadGlobalCharacter(ref.id);
+        const fullProfile = loadGlobalCharacterSync(ref.id);
         if (fullProfile) {
             fullyLoadedCharacters.push({
                 id: ref.id,
@@ -108,25 +156,28 @@ function loadChatAndHydrate(userId, chatId) {
     return chat;
 }
 
-function saveChatFromHydratedState(userId, chatId, hydratedData) {
+async function saveChatFromHydratedStateAsync(userId, chatId, hydratedData) {
     const dir = userDir(userId);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    try {
+        await fsPromises.mkdir(dir, { recursive: true });
+    } catch (e) {}
 
-    // Extract out profiles and process them independently into the /characters index folder
-    const referencesOnly = (hydratedData.characters || []).map(c => {
+    const referencesOnly = [];
+    for (const c of (hydratedData.characters || [])) {
         const structuralRecord = {
             id: c.id || undefined,
             name: c.name || "Unnamed",
             text: c.text || "",
             avatar: c.avatar || null
         };
-        const savedRecord = saveGlobalCharacter(structuralRecord);
+        // Process global references asynchronously
+        const savedRecord = await saveGlobalCharacter(structuralRecord);
         
-        return {
+        referencesOnly.push({
             id: savedRecord.id,
             enabled: c.enabled !== false
-        };
-    });
+        });
+    }
 
     const standardPayload = {
         name: hydratedData.name || "",
@@ -136,7 +187,7 @@ function saveChatFromHydratedState(userId, chatId, hydratedData) {
         characters: referencesOnly
     };
 
-    fs.writeFileSync(chatPath(userId, chatId), JSON.stringify(standardPayload, null, 2));
+    await fsPromises.writeFile(chatPath(userId, chatId), JSON.stringify(standardPayload, null, 2), "utf8");
 }
 
 function listChats(userId) {
@@ -147,7 +198,7 @@ function listChats(userId) {
             .filter(f => f.endsWith(".json"))
             .map(f => {
                 const id = f.replace(".json", "");
-                const fileData = loadChatAndHydrate(userId, id);
+                const fileData = loadChatAndHydrateSync(userId, id);
                 if (fileData.name) return { id, name: fileData.name };
                 let name = id;
                 if (id.startsWith("chat-")) {
@@ -159,7 +210,7 @@ function listChats(userId) {
     } catch (e) { return []; }
 }
 
-io.on("connection", (socket) => {
+io.on("connection", async (socket) => {
     const userId = socket.handshake.auth?.userId;
     if (!userId) return;
     socket.join(userId);
@@ -168,36 +219,39 @@ io.on("connection", (socket) => {
     if (userActiveChatState[userId]) {
         const activeId = userActiveChatState[userId];
         socket.emit("active chat lock", activeId);
-        socket.emit("load chat", { chatId: activeId, ...loadChatAndHydrate(userId, activeId) });
+        const activeChatData = await loadChatAndHydrateAsync(userId, activeId);
+        socket.emit("load chat", { chatId: activeId, ...activeChatData });
     }
 
-    socket.on("new chat", () => {
+    socket.on("new chat", async () => {
         const id = `chat-${Date.now()}`;
-        saveChatFromHydratedState(userId, id, { name: "", characters: [], scenarios: [], extraInfo: "", messages: [] });
+        await saveChatFromHydratedStateAsync(userId, id, { name: "", characters: [], scenarios: [], extraInfo: "", messages: [] });
         userActiveChatState[userId] = id;
         io.to(userId).emit("chats list", listChats(userId));
         io.to(userId).emit("active chat lock", id);
-        io.to(userId).emit("load chat", { chatId: id, ...loadChatAndHydrate(userId, id) });
+        const freshChat = await loadChatAndHydrateAsync(userId, id);
+        io.to(userId).emit("load chat", { chatId: id, ...freshChat });
     });
 
-    socket.on("open chat", (chatId) => {
+    socket.on("open chat", async (chatId) => {
         if (!chatId) return;
         userActiveChatState[userId] = chatId;
         io.to(userId).emit("active chat lock", chatId);
-        io.to(userId).emit("load chat", { chatId, ...loadChatAndHydrate(userId, chatId) });
+        const selectedChat = await loadChatAndHydrateAsync(userId, chatId);
+        io.to(userId).emit("load chat", { chatId, ...selectedChat });
     });
 
-    socket.on("delete selected chats", (chatIds) => {
+    socket.on("delete selected chats", async (chatIds) => {
         if (!Array.isArray(chatIds)) return;
-        chatIds.forEach(id => {
+        for (const id of chatIds) {
             const file = chatPath(userId, id);
-            if (fs.existsSync(file)) {
-                fs.unlinkSync(file);
-            }
+            try {
+                await fsPromises.unlink(file);
+            } catch (e) {}
             if (userActiveChatState[userId] === id) {
                 delete userActiveChatState[userId];
             }
-        });
+        }
         
         const remainingChats = listChats(userId);
         io.to(userId).emit("chats list", remainingChats);
@@ -206,38 +260,40 @@ io.on("connection", (socket) => {
             const fallbackId = remainingChats[0].id;
             userActiveChatState[userId] = fallbackId;
             io.to(userId).emit("active chat lock", fallbackId);
-            io.to(userId).emit("load chat", { chatId: fallbackId, ...loadChatAndHydrate(userId, fallbackId) });
+            const fbChat = await loadChatAndHydrateAsync(userId, fallbackId);
+            io.to(userId).emit("load chat", { chatId: fallbackId, ...fbChat });
         } else if (remainingChats.length === 0) {
             io.to(userId).emit("load chat", { chatId: null, messages: [], characters: [], scenarios: [], extraInfo: "" });
         }
     });
 
-    socket.on("update characters", ({ chatId, characters, clearLogTrack }) => {
+    socket.on("update characters", async ({ chatId, characters, clearLogTrack }) => {
         if (!chatId || !Array.isArray(characters)) return;
-        const chat = loadChatAndHydrate(userId, chatId);
+        const chat = await loadChatAndHydrateAsync(userId, chatId);
         
         chat.characters = characters;
         if (clearLogTrack) chat.messages = [];
         
-        saveChatFromHydratedState(userId, chatId, chat);
-        io.to(userId).emit("load chat", { chatId, ...loadChatAndHydrate(userId, chatId) });
+        await saveChatFromHydratedStateAsync(userId, chatId, chat);
+        const updatedChat = await loadChatAndHydrateAsync(userId, chatId);
+        io.to(userId).emit("load chat", { chatId, ...updatedChat });
     });
 
-    socket.on("update world", ({ chatId, scenarios, customName }) => {
+    socket.on("update world", async ({ chatId, scenarios, customName }) => {
         if (!chatId) return;
-        const chat = loadChatAndHydrate(userId, chatId);
+        const chat = await loadChatAndHydrateAsync(userId, chatId);
         if (scenarios) chat.scenarios = scenarios;
         if (customName !== undefined) chat.name = customName;
-        saveChatFromHydratedState(userId, chatId, chat);
+        await saveChatFromHydratedStateAsync(userId, chatId, chat);
         if (customName) io.to(userId).emit("chats list", listChats(userId));
         io.to(userId).emit("load chat", { chatId, ...chat });
     });
 
-    socket.on("update extra info", ({ chatId, extraInfo }) => {
+    socket.on("update extra info", async ({ chatId, extraInfo }) => {
         if (!chatId) return;
-        const chat = loadChatAndHydrate(userId, chatId);
+        const chat = await loadChatAndHydrateAsync(userId, chatId);
         chat.extraInfo = extraInfo || "";
-        saveChatFromHydratedState(userId, chatId, chat);
+        await saveChatFromHydratedStateAsync(userId, chatId, chat);
         io.to(userId).emit("load chat", { chatId, ...chat });
     });
 
@@ -245,7 +301,7 @@ io.on("connection", (socket) => {
         const { chatId, message } = data;
         if (!chatId || !message) return;
 
-        const chat = loadChatAndHydrate(userId, chatId);
+        const chat = await loadChatAndHydrateAsync(userId, chatId);
         chat.messages.push({ role: "user", content: message });
 
         const activeChars = (chat.characters || []).filter(char => char.enabled);
@@ -288,7 +344,9 @@ io.on("connection", (socket) => {
                 }
             }
             chat.messages.push({ role: "assistant", displayName: identityLabel, content: fullText });
-            saveChatFromHydratedState(userId, chatId, chat);
+            
+            // Non-blocking save keeps response delivery instant
+            await saveChatFromHydratedStateAsync(userId, chatId, chat);
             io.to(userId).emit("stream complete", { chatId });
         } catch (err) {
             console.error("Streaming error caught:", err);
@@ -298,4 +356,4 @@ io.on("connection", (socket) => {
     });
 });
 
-server.listen(3000, () => console.log("Engine online at: http://localhost:3000"));
+server.listen(3010, () => console.log("Engine online at: http://localhost:3010"));
