@@ -120,7 +120,6 @@ async function loadChatAndHydrateAsync(userId, chatId) {
     return chat;
 }
 
-// Synchronous version reserved strictly for rapid array mapping loops where async handlers slow down execution
 function loadChatAndHydrateSync(userId, chatId) {
     const file = chatPath(userId, chatId);
     let chat = { name: "", characters: [], scenarios: [], extraInfo: "", messages: [] };
@@ -170,7 +169,6 @@ async function saveChatFromHydratedStateAsync(userId, chatId, hydratedData) {
             text: c.text || "",
             avatar: c.avatar || null
         };
-        // Process global references asynchronously
         const savedRecord = await saveGlobalCharacter(structuralRecord);
         
         referencesOnly.push({
@@ -239,6 +237,7 @@ io.on("connection", async (socket) => {
         io.to(userId).emit("active chat lock", chatId);
         const selectedChat = await loadChatAndHydrateAsync(userId, chatId);
         io.to(userId).emit("load chat", { chatId, ...selectedChat });
+        io.to(userId).emit("chats list", listChats(userId)); // Force refresh list state selection highlights
     });
 
     socket.on("delete selected chats", async (chatIds) => {
@@ -264,6 +263,20 @@ io.on("connection", async (socket) => {
             io.to(userId).emit("load chat", { chatId: fallbackId, ...fbChat });
         } else if (remainingChats.length === 0) {
             io.to(userId).emit("load chat", { chatId: null, messages: [], characters: [], scenarios: [], extraInfo: "" });
+        }
+    });
+
+    socket.on("mass rename chats", async ({ chatIds, newName }) => {
+        if (!Array.isArray(chatIds) || !newName) return;
+        for (const id of chatIds) {
+            const chat = await loadChatAndHydrateAsync(userId, id);
+            chat.name = newName;
+            await saveChatFromHydratedStateAsync(userId, id, chat);
+        }
+        io.to(userId).emit("chats list", listChats(userId));
+        if (userActiveChatState[userId] && chatIds.includes(userActiveChatState[userId])) {
+            const freshActive = await loadChatAndHydrateAsync(userId, userActiveChatState[userId]);
+            io.to(userId).emit("load chat", { chatId: userActiveChatState[userId], ...freshActive });
         }
     });
 
@@ -345,7 +358,6 @@ io.on("connection", async (socket) => {
             }
             chat.messages.push({ role: "assistant", displayName: identityLabel, content: fullText });
             
-            // Non-blocking save keeps response delivery instant
             await saveChatFromHydratedStateAsync(userId, chatId, chat);
             io.to(userId).emit("stream complete", { chatId });
         } catch (err) {
