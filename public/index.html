@@ -70,7 +70,7 @@ body {
 .user-wrapper { justify-content: flex-end; }
 .user-wrapper .message-container { display: flex; flex-direction: column; align-items: flex-end; }
 
-/* REIFIED FORMATTING ENGINE BASE RULES FOR BOTH USER & AI */
+/* UNIVERSAL TEXT FORMATTING ENGINE RULES FOR BOTH USER & AI */
 .msg-body { font-size: 15px; word-break: break-word; line-height: 1.5; }
 .msg-body p { margin: 0 0 10px 0; }
 .msg-body p:last-child { margin-bottom: 0; }
@@ -297,7 +297,7 @@ function renderItemList() {
         txt.className = "auto-edit-field";
         txt.style.minHeight = "180px";
         txt.value = chatData.extraInfo || "";
-        txt.placeholder = "Enter facts, rules, constraints or lore updates here for the AI to instantly remember...";
+        txt.placeholder = "Enter facts, rules, constraints or lore updates here...";
         
         txt.oninput = () => { chatData.extraInfo = txt.value; };
         txt.onblur = () => { socket.emit("update extra info", { chatId: currentChat, extraInfo: txt.value }); };
@@ -308,6 +308,9 @@ function renderItemList() {
     }
 
     const items = type === "character" ? (chatData.characters || []) : (chatData.scenarios || []);
+
+    // Document fragments minimize layouts shifts when handling multiple active profiles
+    const fragment = document.createDocumentFragment();
 
     items.forEach((item, idx) => {
         const card = document.createElement("div");
@@ -424,8 +427,9 @@ function renderItemList() {
         };
 
         card.appendChild(bodyArea);
-        zone.appendChild(card);
+        fragment.appendChild(card);
     });
+    zone.appendChild(fragment);
 }
 
 function showModal(title, type) {
@@ -439,7 +443,6 @@ function showModal(title, type) {
     
     const avatarRow = document.getElementById("avatarUploadContainer");
     avatarRow.style.display = type === "character" ? "flex" : "none";
-    
     document.getElementById("new-item-inputs").style.display = type === "extrainfo" ? "none" : "flex";
     
     renderItemList();
@@ -488,7 +491,6 @@ document.getElementById("save").onclick = () => {
     }
 };
 
-// BOTH CHAT TILES RENDER VIA THE MARKED MD PARSER INSTANCE
 function appendMessage(msg) {
     const isUser = msg.role === "user";
     const wrapper = document.createElement("div");
@@ -504,7 +506,7 @@ function appendMessage(msg) {
     const body = document.createElement("div");
     body.className = "msg-body";
     
-    // Marked parsing pipeline applies universally to user formatting blueprints as well
+    // Marked parsing rules process text uniformly for both participants
     body.innerHTML = marked.parse(msg.content);
 
     container.append(header, body);
@@ -517,7 +519,31 @@ function appendMessage(msg) {
 function renderChat() {
     chatDiv.innerHTML = "";
     if (!chatData || !chatData.messages) return;
-    chatData.messages.forEach(appendMessage);
+    
+    // Process heavy backlogs via document fragments to keep processing overhead flat
+    const localFragment = document.createDocumentFragment();
+    chatData.messages.forEach(msg => {
+        const isUser = msg.role === "user";
+        const wrapper = document.createElement("div");
+        wrapper.className = `message-wrapper ${isUser ? 'user-wrapper' : 'ai-wrapper'}`;
+
+        const container = document.createElement("div");
+        container.className = "message-container";
+
+        const header = document.createElement("div");
+        header.className = "msg-header";
+        header.innerText = isUser ? "You" : (msg.displayName || "Assistant");
+
+        const body = document.createElement("div");
+        body.className = "msg-body";
+        body.innerHTML = marked.parse(msg.content);
+
+        container.append(header, body);
+        wrapper.appendChild(container);
+        localFragment.appendChild(wrapper);
+    });
+    
+    chatDiv.appendChild(localFragment);
     chatDiv.scrollTop = chatDiv.scrollHeight;
 }
 
@@ -533,10 +559,11 @@ function updateActionBarVisibility() {
     }
 }
 
-// SOCKET EVENTS
 socket.on("chats list", (chats) => {
     const list = document.getElementById("chatList");
     list.innerHTML = "";
+    const listFragment = document.createDocumentFragment();
+    
     chats.forEach(c => {
         const wrap = document.createElement("div");
         wrap.className = `chat-item-wrapper ${c.id === currentChat ? 'active' : ''}`;
@@ -572,8 +599,9 @@ socket.on("chats list", (chats) => {
             badge.innerText = "Live";
             wrap.appendChild(badge);
         }
-        list.appendChild(wrap);
+        listFragment.appendChild(wrap);
     });
+    list.appendChild(listFragment);
     updateActionBarVisibility();
 });
 
@@ -614,7 +642,6 @@ socket.on("stream complete", (data) => {
     activeStreamText = "";
 });
 
-// MASS ACTIONS INTERFACES
 document.getElementById("massDeleteBtn").onclick = () => {
     if (selectedChatsTrack.size === 0) return;
     if (confirm(`Are you sure you want to delete the ${selectedChatsTrack.size} selected chats?`)) {
@@ -655,7 +682,6 @@ document.getElementById("clearLogsBtn").onclick = () => {
     }
 };
 
-// UI Toggles
 document.getElementById("menuToggle").onclick = () => {
     document.getElementById("sidebar").classList.add("open");
     document.getElementById("sidebarOverlay").classList.add("open");
