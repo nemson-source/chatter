@@ -11,7 +11,7 @@ const app = express();
 const server = http.createServer(app);
 
 const io = new Server(server, {
-    maxHttpBufferSize: 5e7 // 50MB limit for uploading large avatar payloads safely
+    maxHttpBufferSize: 5e7 // 50MB safeguard limit
 });
 
 const grok = new OpenAI({
@@ -21,18 +21,32 @@ const grok = new OpenAI({
 
 app.use(express.static("public"));
 
-// TARGET DIRECTORIES
 const CHATS_DIR = "./chat-history/web";
 const CHARACTERS_DIR = "./characters";
 
-// Sync check on startup only
 if (!fs.existsSync(CHARACTERS_DIR)) {
     fs.mkdirSync(CHARACTERS_DIR, { recursive: true });
 }
 
 const userActiveChatState = {};
-// Global in-memory cache to prevent repetitive, sluggish disk reads for characters
+// Global fast RAM cache to prevent repetitive, sluggish disk reads for characters
 const characterCache = new Map();
+
+// Pre-warm character cache on startup to ensure instant lookups
+try {
+    if (fs.existsSync(CHARACTERS_DIR)) {
+        const files = fs.readdirSync(CHARACTERS_DIR);
+        files.forEach(file => {
+            if (file.endsWith(".json")) {
+                const charId = file.replace(".json", "");
+                const data = JSON.parse(fs.readFileSync(path.join(CHARACTERS_DIR, file), "utf8"));
+                characterCache.set(charId, data);
+            }
+        });
+    }
+} catch (e) {
+    console.error("Error pre-warming character cache:", e);
+}
 
 function userDir(userId) {
     const safeId = String(userId || "default_user").replace(/[^a-zA-Z0-9_\-]/g, "");
@@ -44,9 +58,6 @@ function chatPath(userId, chatId) {
     return path.join(userDir(userId), `${safeChatId}.json`);
 }
 
-/**
- * Optimized Character Storage with In-Memory Caching
- */
 function getCharacterFilePath(charId) {
     return path.join(CHARACTERS_DIR, `${charId}.json`);
 }
@@ -57,10 +68,8 @@ async function saveGlobalCharacter(char) {
         id = `char-${crypto.randomUUID()}`;
         char.id = id;
     }
-    // Update cache instantly so reads are immediate
     characterCache.set(id, char);
     
-    // Async background write to disk
     fsPromises.writeFile(getCharacterFilePath(id), JSON.stringify(char, null, 2), "utf8")
         .catch(err => console.error(`Failed to background write character ${id}:`, err));
         
@@ -82,7 +91,7 @@ function loadGlobalCharacterSync(charId) {
 }
 
 /**
- * Hydrates chat records using non-blocking asynchronous file operations
+ * High-Speed Async Chat Hydration Engine
  */
 async function loadChatAndHydrateAsync(userId, chatId) {
     const file = chatPath(userId, chatId);
@@ -91,7 +100,7 @@ async function loadChatAndHydrateAsync(userId, chatId) {
     try {
         const raw = await fsPromises.readFile(file, "utf8");
         chat = JSON.parse(raw);
-    } catch (e) { /* File missing or corrupt, uses default empty struct */ }
+    } catch (e) {}
 
     if (!chat.scenarios) chat.scenarios = [];
     if (!chat.characters) chat.characters = [];
@@ -103,7 +112,6 @@ async function loadChatAndHydrateAsync(userId, chatId) {
     for (const ref of chat.characters) {
         if (!ref || !ref.id) continue;
         
-        // Fast cache read
         const fullProfile = loadGlobalCharacterSync(ref.id);
         if (fullProfile) {
             fullyLoadedCharacters.push({
@@ -237,7 +245,7 @@ io.on("connection", async (socket) => {
         io.to(userId).emit("active chat lock", chatId);
         const selectedChat = await loadChatAndHydrateAsync(userId, chatId);
         io.to(userId).emit("load chat", { chatId, ...selectedChat });
-        io.to(userId).emit("chats list", listChats(userId)); // Force refresh list state selection highlights
+        io.to(userId).emit("chats list", listChats(userId));
     });
 
     socket.on("delete selected chats", async (chatIds) => {
