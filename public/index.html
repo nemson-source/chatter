@@ -111,10 +111,11 @@ body {
 .fold-toggle-btn { background: transparent; border: none; color: var(--text-secondary); cursor: pointer; font-size: 12px; padding: 4px; display: flex; align-items: center; justify-content: center; transition: color 0.2s; }
 .fold-toggle-btn:hover { color: white; }
 
-/* CHARACTER AVATAR THUMBNAILS */
-.item-avatar { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; background: #444; border: 1px solid var(--border-color); flex-shrink: 0; cursor: pointer; transition: transform 0.2s ease; }
+/* CHARACTER AVATAR THUMBNAILS (LAZY ZONE) */
+.avatar-lazy-holder { margin-bottom: 6px; display: flex; align-items: center; justify-content: flex-start; }
+.item-avatar { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; background: #444; border: 1px solid var(--border-color); flex-shrink: 0; cursor: pointer; transition: transform 0.2s ease; }
 .item-avatar:hover { transform: scale(1.08); }
-.avatar-placeholder { width: 36px; height: 36px; border-radius: 50%; background: #444; display: flex; align-items: center; justify-content: center; font-size: 18px; color: var(--text-secondary); flex-shrink: 0; }
+.avatar-placeholder { width: 44px; height: 44px; border-radius: 50%; background: #444; display: flex; align-items: center; justify-content: center; font-size: 20px; color: var(--text-secondary); flex-shrink: 0; }
 
 /* LIGHTBOX FOR BIG IMAGE VIEW */
 #lightbox { display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.85); z-index: 20000; align-items: center; justify-content: center; cursor: zoom-out; opacity: 0; transition: opacity 0.2s ease-in-out; }
@@ -239,6 +240,12 @@ mainMessageInput.addEventListener("keydown", function(e) {
 
 function closeModal() { document.getElementById("modal").style.display = "none"; }
 
+// Clear active memory footprints on closing view modal
+function closeModalAndFlush() {
+    closeModal();
+    document.getElementById("item-list-zone").innerHTML = "";
+}
+
 function closeMobileSidebar() {
     document.getElementById("sidebar").classList.remove("open");
     document.getElementById("sidebarOverlay").classList.remove("open");
@@ -308,8 +315,6 @@ function renderItemList() {
     }
 
     const items = type === "character" ? (chatData.characters || []) : (chatData.scenarios || []);
-
-    // Document fragments minimize layouts shifts when handling multiple active profiles
     const fragment = document.createDocumentFragment();
 
     items.forEach((item, idx) => {
@@ -344,21 +349,6 @@ function renderItemList() {
             header.appendChild(foldBtn);
         }
 
-        if (type === "character") {
-            if (item.avatar) {
-                const img = document.createElement("img");
-                img.className = "item-avatar";
-                img.src = item.avatar;
-                img.onclick = (e) => { e.stopPropagation(); openLightbox(item.avatar); };
-                header.appendChild(img);
-            } else {
-                const placeholder = document.createElement("div");
-                placeholder.className = "avatar-placeholder";
-                placeholder.innerText = item.name ? item.name.charAt(0).toUpperCase() : "?";
-                header.appendChild(placeholder);
-            }
-        }
-
         const nameInput = document.createElement("input");
         nameInput.className = "item-name";
         nameInput.value = item.name || "";
@@ -388,10 +378,20 @@ function renderItemList() {
         header.appendChild(delBtn);
         card.appendChild(header);
 
+        // Body area holds configuration inputs and description string references
         const bodyArea = document.createElement("div");
         bodyArea.className = "item-body";
-        bodyArea.innerText = item.text || (type === "character" ? "Click to add instructions..." : "Click to add world setting description...");
         
+        // Lazy-loading container wrapper for the avatar
+        const lazyImageContainer = document.createElement("div");
+        lazyImageContainer.className = "avatar-lazy-holder";
+        
+        const descriptionTextField = document.createElement("div");
+        descriptionTextField.className = "editable-desc-string";
+        descriptionTextField.innerText = item.text || (type === "character" ? "Click to add instructions..." : "Click to add world setting description...");
+        
+        bodyArea.append(lazyImageContainer, descriptionTextField);
+
         if (type === "character") {
             bodyArea.style.display = "none";
             foldBtn.onclick = (e) => {
@@ -399,14 +399,32 @@ function renderItemList() {
                 if (bodyArea.style.display === "none") {
                     bodyArea.style.display = "block";
                     foldBtn.innerHTML = "&#x25BE;";
+                    
+                    // ON EXPAND: Mount image dynamically to DOM
+                    if (item.avatar) {
+                        const img = document.createElement("img");
+                        img.className = "item-avatar";
+                        img.src = item.avatar;
+                        img.onclick = (ev) => { ev.stopPropagation(); openLightbox(item.avatar); };
+                        lazyImageContainer.appendChild(img);
+                    } else {
+                        const placeholder = document.createElement("div");
+                        placeholder.className = "avatar-placeholder";
+                        placeholder.innerText = item.name ? item.name.charAt(0).toUpperCase() : "?";
+                        lazyImageContainer.appendChild(placeholder);
+                    }
                 } else {
                     bodyArea.style.display = "none";
                     foldBtn.innerHTML = "&#x25B8;";
+                    
+                    // ON CLOSE: Wipe image from memory stack completely to ensure high speed
+                    lazyImageContainer.innerHTML = "";
                 }
             };
         }
 
-        bodyArea.onclick = () => {
+        descriptionTextField.onclick = (e) => {
+            e.stopPropagation();
             const edit = document.createElement("textarea");
             edit.className = "auto-edit-field";
             edit.value = item.text || "";
@@ -505,8 +523,6 @@ function appendMessage(msg) {
 
     const body = document.createElement("div");
     body.className = "msg-body";
-    
-    // Marked parsing rules process text uniformly for both participants
     body.innerHTML = marked.parse(msg.content);
 
     container.append(header, body);
@@ -520,7 +536,6 @@ function renderChat() {
     chatDiv.innerHTML = "";
     if (!chatData || !chatData.messages) return;
     
-    // Process heavy backlogs via document fragments to keep processing overhead flat
     const localFragment = document.createDocumentFragment();
     chatData.messages.forEach(msg => {
         const isUser = msg.role === "user";
