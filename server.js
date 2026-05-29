@@ -29,7 +29,6 @@ if (!fs.existsSync(CHARACTERS_DIR)) {
 }
 
 const userActiveChatState = {};
-// Global fast RAM cache to prevent repetitive, sluggish disk reads for characters
 const characterCache = new Map();
 
 // Pre-warm character cache on startup to ensure instant lookups
@@ -90,9 +89,6 @@ function loadGlobalCharacterSync(charId) {
     }
 }
 
-/**
- * High-Speed Async Chat Hydration Engine
- */
 async function loadChatAndHydrateAsync(userId, chatId) {
     const file = chatPath(userId, chatId);
     let chat = { name: "", characters: [], scenarios: [], extraInfo: "", messages: [] };
